@@ -1,6 +1,5 @@
-
 'use client';
-
+import { Suspense } from 'react';
 import { useState, useRef, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -11,7 +10,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Skeleton } from '@/components/ui/skeleton';
 
-export default function ImageToQuestionPage() {
+function ImageToQuestionPage() {
   const [image, setImage] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [extractedJson, setExtractedJson] = useState<ImageToQuestionPaperOutput | null>(null);
@@ -170,5 +169,13 @@ export default function ImageToQuestionPage() {
         )}
       </div>
     </div>
+  );
+}
+
+export default function ImageToQuestionPageWrapper() {
+  return (
+    <Suspense fallback={<div>Loading...</div>}>
+      <ImageToQuestionPage />
+    </Suspense>
   );
 }
