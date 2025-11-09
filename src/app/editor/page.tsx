@@ -1,5 +1,5 @@
-
 'use client';
+import { Suspense } from 'react';
 import { useState, useEffect, useRef, useLayoutEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -146,7 +146,7 @@ const initialPaperData: Omit<Paper, 'id'> = {
 };
 
 
-export default function EditorPage() {
+function EditorPage() {
   const [paper, setPaper] = useState<Paper | null>(null);
   const { toast } = useToast();
   const router = useRouter();
@@ -1232,6 +1232,14 @@ export default function EditorPage() {
         </div>
       </div>
     </>
+  );
+}
+
+export default function EditorPageWrapper() {
+  return (
+    <Suspense fallback={<div>Loading...</div>}>
+      <EditorPage />
+    </Suspense>
   );
 }
 
