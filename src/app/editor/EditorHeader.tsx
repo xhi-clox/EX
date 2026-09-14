@@ -1,37 +1,37 @@
 
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from '@/components/ui/dialog';
 import { Slider } from '@/components/ui/slider';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Save, Settings, Eye, Download, LogOut, FileText, Trash2, ArrowUp, ArrowDown, Plus } from 'lucide-react';
-import type { Paper, PaperSettings, PageContent } from './page';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Save, Settings, Eye, Download, LogOut, FileText, Trash2, ArrowUp, ArrowDown, Plus, ArrowLeft } from 'lucide-react';
+import type { Paper, PaperSettings, PageContent, BookletSpread, HalfPayload, MainNumberingFormat } from './page';
 import PaperPreview from './PaperPreview';
-import jsPDF from 'jspdf';
-import html2canvas from 'html2canvas';
-import { createRoot } from 'react-dom/client';
-import { PaperPage } from './PaperPreview';
+import { PaperPage } from './paper-render';
 
 interface EditorHeaderProps {
   paper: Paper | null;
   settings: PaperSettings;
   setSettings: React.Dispatch<React.SetStateAction<PaperSettings>>;
+  setPaper: React.Dispatch<React.SetStateAction<Paper | null>>;
   pages: PageContent[][];
   handleSave: () => void;
   handleExit: () => void;
   isDownloading: boolean;
   setIsDownloading: React.Dispatch<React.SetStateAction<boolean>>;
-  bookletPages: { left: string | null; right: string | null; }[];
-  setBookletPages: React.Dispatch<React.SetStateAction<{ left: string | null; right: string | null; }[]>>;
+  bookletPages: BookletSpread[];
+  setBookletPages: React.Dispatch<React.SetStateAction<BookletSpread[]>>;
 }
 
 export const EditorHeader: React.FC<EditorHeaderProps> = ({ 
   paper, 
   settings, 
-  setSettings, 
+  setSettings,
+  setPaper, 
   pages,
   handleSave,
   handleExit,
@@ -40,206 +40,103 @@ export const EditorHeader: React.FC<EditorHeaderProps> = ({
   bookletPages,
   setBookletPages
 }) => {
-  const [katexCss, setKatexCss] = useState('');
+  const [isPdfGenerating, setIsPdfGenerating] = useState(false);
 
-  useEffect(() => {
-    // Fetch KaTeX CSS to inject it for PDF generation
-    fetch('https://cdn.jsdelivr.net/npm/katex@0.16.10/dist/katex.min.css')
-      .then(response => response.text())
-      .then(css => setKatexCss(css))
-      .catch(err => console.error("Failed to fetch KaTeX CSS", err));
-  }, []);
-
-  const generatePdf = async () => {
+  const downloadPdf = async () => {
     if (!paper || bookletPages.length === 0) return;
-    
-    const a4Width = 842; 
-    const a4Height = 595;
-    const pdf = new jsPDF({
-      orientation: 'landscape',
-      unit: 'pt',
-      format: 'a4',
-    });
-
-    const addImageToPdf = async (canvasDataUrl: string | null, x: number) => {
-      if (!canvasDataUrl) return;
-      await new Promise<void>((resolve, reject) => {
-        const img = new Image();
-        img.onload = () => {
-          try {
-            const a4HalfWidth = a4Width / 2;
-            const a4HalfHeight = a4Height;
-    
-            const scale = Math.min(a4HalfWidth / img.naturalWidth, a4HalfHeight / img.naturalHeight);
-            const drawWidth = img.naturalWidth * scale;
-            const drawHeight = img.naturalHeight * scale;
-    
-            const drawX = x + (a4HalfWidth - drawWidth) / 2;
-            const drawY = (a4HalfHeight - drawHeight) / 2;
-    
-            pdf.addImage(img, 'PNG', drawX, drawY, drawWidth, drawHeight);
-            resolve();
-          } catch (e) {
-            reject(e);
-          }
-        };
-        img.onerror = (e) => reject(e);
-        img.src = canvasDataUrl;
+    setIsPdfGenerating(true);
+    try {
+      const res = await fetch('/api/pdf', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ paper, settings, spreads: bookletPages }),
       });
-    };
-
-    for (let i = 0; i < bookletPages.length; i++) {
-        if (i > 0) {
-            pdf.addPage();
-        }
-        const bookletPage = bookletPages[i];
-        await addImageToPdf(bookletPage.left, 0);
-        await addImageToPdf(bookletPage.right, a4Width / 2);
+      if (!res.ok) {
+        const errText = await res.text();
+        throw new Error(errText || `Request failed (${res.status})`);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'question-paper-booklet.pdf';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+    } catch (e: any) {
+      console.error('PDF generation failed', e);
+      alert('PDF generation failed: ' + (e?.message ?? e));
+    } finally {
+      setIsPdfGenerating(false);
+      setBookletPages([]);
+      setIsDownloading(false);
     }
-    
-    pdf.save('question-paper-booklet.pdf');
-    setIsDownloading(false);
-    setBookletPages([]);
   };
 
-  const preparePdfDownload = async () => {
-    if (!paper || pages.length === 0 || !katexCss) {
-        if (!katexCss) console.error("KaTeX CSS not loaded yet.");
-        return;
-    }
-    
+  const preparePdfDownload = () => {
+    if (!paper || pages.length === 0) return;
     setIsDownloading(true);
     setBookletPages([]);
 
-    const captureNode = async (pageIndex: number | null): Promise<string | null> => {
-        if (pageIndex === null || !paper) return null;
-        const pageContent = pages[pageIndex];
-        if (!pageContent) return null;
-    
-        const mmToPx = (mm: number) => mm * 3.7795275591;
-        const printCSS = `
-            ${katexCss} /* Inject KaTeX CSS */
-            * { box-sizing: border-box; }
-            html, body { margin: 0; padding: 0; }
-            .pdf-render-root {
-            width: ${settings.width}px;
-            min-height: ${settings.height}px;
-            font-family: "PT Sans", "Noto Sans Bengali", Arial, sans-serif;
-            font-size: ${settings.fontSize}pt;
-            line-height: ${settings.lineHeight};
-            margin: 0;
-            padding: ${mmToPx(settings.margins.top)}px ${mmToPx(settings.margins.right)}px ${mmToPx(settings.margins.bottom)}px ${mmToPx(settings.margins.left)}px;
-            background: #fff;
-            color: #000;
-            }
-            .pdf-render-root p { margin: 0 0 4px 0; }
-            .pdf-render-root h1,h2,h3 { margin: 0 0 6px 0; }
-            .pdf-render-root ul, .pdf-render-root ol { margin: 0 0 6px 1.2em; padding: 0; }
-            .pdf-render-root textarea, .pdf-render-root input { font-family: inherit; font-size: inherit; }
-        `;
-    
-        const pageContainer = document.createElement('div');
-        pageContainer.style.position = 'absolute';
-        pageContainer.style.left = '-9999px';
-        pageContainer.style.top = '0';
-        document.body.appendChild(pageContainer);
-    
-        let root = null as any;
-        try {
-            const styleEl = document.createElement('style');
-            styleEl.textContent = printCSS;
-            pageContainer.appendChild(styleEl);
-    
-            const wrapper = document.createElement('div');
-            wrapper.className = 'pdf-render-root';
-            pageContainer.appendChild(wrapper);
-    
-            const nodeToRender = (
-            <PaperPage
-                paper={paper}
-                pageContent={pageContent}
-                isFirstPage={pageIndex === 0}
-                settings={settings}
-                allQuestions={paper.questions}
-            />
-            );
-    
-            root = createRoot(wrapper);
-            root.render(nodeToRender);
-    
-            if ((document as any).fonts && (document as any).fonts.ready) {
-                try { await (document as any).fonts.ready; } catch(e) { /* ignore */ }
-            }
-    
-            const imgs = wrapper.querySelectorAll('img');
-            if (imgs.length > 0) {
-            await Promise.all(Array.from(imgs).map((img) => {
-                const i = img as HTMLImageElement;
-                if (i.complete) return Promise.resolve();
-                return new Promise<void>(res => { i.onload = i.onerror = () => res(); });
-            }));
-            }
-            
-            await new Promise(r => setTimeout(r, 100)); // Increased delay for KaTeX
-    
-            const canvas = await html2canvas(wrapper as HTMLElement, {
-                scale: 2,
-                useCORS: true,
-                allowTaint: false,
-                backgroundColor: '#fff',
-            });
-    
-            return canvas.toDataURL('image/png');
-        } catch (err) {
-            console.error('captureNode error:', err);
-            setIsDownloading(false);
-            return null;
-        } finally {
-            try {
-                if (root) root.unmount();
-            } catch (_) {}
-            if (pageContainer.parentNode) pageContainer.parentNode.removeChild(pageContainer);
-        }
-    };
-  
-    let n = pages.length;
-    const paddedPageIndices: (number | null)[] = [...Array(n).keys()];
-    while (paddedPageIndices.length % 4 !== 0 && paddedPageIndices.length > 0) {
-      paddedPageIndices.push(null);
+    const padded: (PageContent[] | null)[] = [...pages];
+    if (padded.length % 2 !== 0) {
+      padded.push(null);
     }
-    n = paddedPageIndices.length;
-  
-    const bookletOrderIndices: (number | null)[] = [];
-    if (n > 0) {
-      for (let i = 0; i < n / 2; i++) {
-        if (i % 2 === 0) {
-          bookletOrderIndices.push(paddedPageIndices[n - 1 - i]);
-          bookletOrderIndices.push(paddedPageIndices[i]);
-        } else {
-          bookletOrderIndices.push(paddedPageIndices[i]);
-          bookletOrderIndices.push(paddedPageIndices[n - 1 - i]);
-        }
+    const n = padded.length;
+    const order: (PageContent[] | null)[] = [];
+    for (let i = 0; i < n / 2; i++) {
+      if (i % 2 === 0) {
+        order.push(padded[n - 1 - i]);
+        order.push(padded[i]);
+      } else {
+        order.push(padded[i]);
+        order.push(padded[n - 1 - i]);
       }
     }
-  
-    try {
-        const finalBookletPages = [];
-        for (let i = 0; i < bookletOrderIndices.length; i += 2) {
-          const leftPageIndex = bookletOrderIndices[i];
-          const rightPageIndex = bookletOrderIndices[i + 1];
-      
-          const [leftCanvasUrl, rightCanvasUrl] = await Promise.all([
-              captureNode(leftPageIndex),
-              captureNode(rightPageIndex),
-          ]);
-          
-          finalBookletPages.push({ left: leftCanvasUrl, right: rightCanvasUrl });
-        }
-        setBookletPages(finalBookletPages);
-    } catch(e) {
-        console.error("Failed to prepare PDF download", e);
-        setIsDownloading(false);
+
+    const spreads: BookletSpread[] = [];
+    for (let i = 0; i < order.length; i += 2) {
+      const leftArr = order[i];
+      const rightArr = order[i + 1] ?? null;
+      spreads.push({
+        left: leftArr && leftArr.length > 0 ? { content: leftArr, isFirstPage: leftArr === pages[0] } : null,
+        right: rightArr && rightArr.length > 0 ? { content: rightArr, isFirstPage: rightArr === pages[0] } : null,
+      });
     }
+    setBookletPages(spreads);
+  };
+
+  const SpreadSheet = ({ spread, index }: { spread: BookletSpread; index: number }) => {
+    if (!paper) return null;
+    const sheetW = 842;
+    const sheetH = 595;
+    const halfW = sheetW / 2;
+    const scale = Math.min(halfW / settings.width, sheetH / settings.height);
+
+    const renderHalf = (half: HalfPayload | null) => {
+      if (!half) return null;
+      return (
+        <div className="w-1/2 h-full overflow-visible flex items-center justify-center">
+          <div style={{ width: settings.width, height: settings.height, transform: `scale(${scale})`, transformOrigin: 'center' }}>
+            <PaperPage
+              paper={paper}
+              pageContent={half.content}
+              isFirstPage={half.isFirstPage}
+              settings={settings}
+              allQuestions={paper.questions}
+            />
+          </div>
+        </div>
+      );
+    };
+
+    return (
+      <div key={index} className="flex-shrink-0 bg-white shadow-lg flex" style={{ width: sheetW, height: sheetH }}>
+        {renderHalf(spread.left)}
+        {renderHalf(spread.right)}
+      </div>
+    );
   };
 
 
@@ -248,8 +145,16 @@ export const EditorHeader: React.FC<EditorHeaderProps> = ({
   }
 
   return (
-    <header className="sticky top-0 z-30 flex h-14 items-center justify-between gap-4 border-b bg-slate-900 px-4 sm:px-6">
-       <div>{/* Placeholder for left content */}</div>
+    <header className="sticky top-0 z-30 flex h-14 shrink-0 items-center justify-between gap-4 border-b border-slate-700/60 bg-slate-900 px-4 sm:px-6">
+      <div className="flex min-w-0 items-center gap-3">
+        <Button onClick={handleExit} variant="ghost" size="icon" title="Back to dashboard" className="shrink-0 text-slate-400 hover:bg-slate-800 hover:text-white">
+          <ArrowLeft className="size-4" />
+        </Button>
+        <div className="min-w-0 leading-tight">
+          <p className="truncate text-sm font-semibold text-white">{paper.examTitle || 'Untitled Paper'}</p>
+          <p className="truncate text-xs text-slate-400">{paper.subject}{paper.grade ? ` • Class ${paper.grade}` : ''}</p>
+        </div>
+      </div>
       <div className="flex items-center gap-2">
         <Dialog>
           <DialogTrigger asChild>
@@ -277,6 +182,24 @@ export const EditorHeader: React.FC<EditorHeaderProps> = ({
                     min={1.0} max={2.5} step={0.1}
                   />
                 </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <Label className="text-sm shrink-0">Question Numbering:</Label>
+                <Select 
+                  value={paper.mainNumberingFormat ?? 'english-numeric'}
+                  onValueChange={(value: MainNumberingFormat) => {
+                    setPaper(prev => prev ? { ...prev, mainNumberingFormat: value } : prev);
+                  }}
+                >
+                  <SelectTrigger className="w-40 h-9 text-xs">
+                    <SelectValue placeholder="Format" />
+                  </SelectTrigger>
+                  <SelectContent className="bg-slate-800 border-slate-700 text-white">
+                    <SelectItem value="english-numeric">1, 2, 3 (English)</SelectItem>
+                    <SelectItem value="bangla-numeric">১, ২, ৩ (Bangla)</SelectItem>
+                    <SelectItem value="roman">i, ii, iii (Roman)</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4 items-end">
                 <div className="space-y-1">
@@ -315,7 +238,7 @@ export const EditorHeader: React.FC<EditorHeaderProps> = ({
             <DialogHeader>
               <DialogTitle>Question Paper Preview</DialogTitle>
             </DialogHeader>
-            <div className="flex-1 overflow-auto bg-gray-100 p-4">
+            <div className="flex-1 overflow-auto app-scrollbar-light bg-gray-100 p-3">
               <PaperPreview 
                 paper={paper} 
                 pages={pages}
@@ -332,18 +255,11 @@ export const EditorHeader: React.FC<EditorHeaderProps> = ({
             <DialogHeader>
               <DialogTitle>Booklet Download Preview</DialogTitle>
             </DialogHeader>
-            <div className="my-4 overflow-x-auto">
+            <div className="mb-3 mt-2 overflow-x-auto app-scrollbar-light">
               {bookletPages.length > 0 ? (
-                <div className="flex gap-4 p-4 bg-gray-200">
-                  {bookletPages.map((page, index) => (
-                    <div key={index} className="flex-shrink-0 bg-white shadow-lg flex" style={{width: '842px', height: '595px'}}>
-                      <div className="w-1/2 h-full border-r border-gray-300">
-                        {page.left && <img src={page.left} alt={`Page ${index} Left`} className="w-full h-full object-contain" />}
-                      </div>
-                      <div className="w-1/2 h-full">
-                        {page.right && <img src={page.right} alt={`Page ${index} Right`} className="w-full h-full object-contain" />}
-                      </div>
-                    </div>
+                <div className="flex gap-3 rounded-md bg-gray-200 p-3">
+                  {bookletPages.map((spread, index) => (
+                    <SpreadSheet spread={spread} index={index} />
                   ))}
                 </div>
               ) : (
@@ -352,8 +268,10 @@ export const EditorHeader: React.FC<EditorHeaderProps> = ({
                 </div>
               )}
             </div>
-            <DialogFooter>
-              <Button onClick={generatePdf} disabled={bookletPages.length === 0}>Confirm and Download PDF</Button>
+            <DialogFooter className="pt-3">
+              <Button onClick={downloadPdf} disabled={bookletPages.length === 0 || isPdfGenerating} className="bg-primary hover:bg-primary/90 text-primary-foreground">
+                {isPdfGenerating ? 'Generating PDF...' : 'Confirm and Download PDF'}
+              </Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>

@@ -4,12 +4,13 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useState } from 'react';
-import { ChevronDown, ChevronUp, Send, AlertCircle, CheckCircle } from 'lucide-react';
+import { ChevronDown, ChevronUp, Send, AlertCircle, Sigma, Delete, MousePointerClick, Lightbulb } from 'lucide-react';
 import 'katex/dist/katex.min.css';
 import { InlineMath } from 'react-katex';
 
 interface MathExpressionsProps {
   onInsert: (expression: string) => void;
+  targetLabel: string | null;
 }
 
 interface ExpressionItem {
@@ -156,11 +157,12 @@ const expressionCategories: ExpressionCategory[] = [
     },
 ];
 
-export default function MathExpressions({ onInsert }: MathExpressionsProps) {
+export default function MathExpressions({ onInsert, targetLabel }: MathExpressionsProps) {
   const [currentExpression, setCurrentExpression] = useState('');
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(
-    new Set(['Basic Operations', 'Fractions & Division'])
+    new Set(['Basic Operations'])
   );
+  const [showTips, setShowTips] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [validationResult, setValidationResult] = useState<{isValid: boolean; errors: string[]}>({isValid: true, errors: []});
 
@@ -222,6 +224,11 @@ export default function MathExpressions({ onInsert }: MathExpressionsProps) {
     setValidationResult({isValid: true, errors: []});
   };
 
+  const handleBackspace = () => {
+    if (!currentExpression) return;
+    handleExpressionChange(Array.from(currentExpression).slice(0, -1).join(''));
+  };
+
   const renderLatexPreview = (latex: string) => {
     try {
       if (!latex.trim()) {
@@ -241,118 +248,126 @@ export default function MathExpressions({ onInsert }: MathExpressionsProps) {
   };
 
   return (
-    <Card className="bg-slate-900 border-slate-700 text-white">
-      <CardHeader>
-        <CardTitle>Math Expressions</CardTitle>
-        <p className="text-sm text-muted-foreground">
-          Build mathematical expressions with automatic validation
+    <Card className="bg-slate-900 border-slate-700 text-white overflow-hidden">
+      <CardHeader className="pb-3">
+        <CardTitle className="flex items-center gap-2 text-base">
+          <span className="flex h-7 w-7 items-center justify-center rounded-md bg-purple-500/15 text-purple-300">
+            <Sigma className="h-4 w-4" />
+          </span>
+          Math Expressions
+        </CardTitle>
+        <p className="text-xs text-muted-foreground">
+          Tap symbols or type, preview, then insert into the paper.
         </p>
       </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="space-y-3 p-4 border rounded-lg bg-slate-800">
-            <div>
+      <CardContent className="space-y-3">
+        {targetLabel ? (
+          <div className="flex items-center gap-2 rounded-md border border-emerald-700/60 bg-emerald-900/30 px-2.5 py-1.5 text-xs text-emerald-200">
+            <MousePointerClick className="h-3.5 w-3.5 shrink-0" />
+            <span className="truncate">Insert into <span className="font-semibold">{targetLabel}</span></span>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2 rounded-md border border-amber-700/60 bg-amber-900/30 px-2.5 py-1.5 text-xs text-amber-200">
+            <MousePointerClick className="h-3.5 w-3.5 shrink-0" />
+            <span>Click any question field first, then Insert</span>
+          </div>
+        )}
+
+        <div className="space-y-2.5 rounded-lg border border-slate-700 bg-slate-800/60 p-3">
+            <div className="flex gap-2">
                 <Input
                   value={currentExpression}
                   onChange={(e) => handleExpressionChange(e.target.value)}
                   onKeyDown={handleKeyPress}
-                  placeholder="Enter math expression or LaTeX code..."
-                  className="flex-1 font-mono text-sm bg-slate-700 border-slate-600"
+                  placeholder="Type LaTeX, e.g. \frac{a}{b}"
+                  className="flex-1 font-mono text-sm bg-slate-700 border-slate-600 h-9"
                   disabled={isProcessing}
                 />
+                <Button
+                  variant="outline"
+                  size="icon"
+                  onClick={handleBackspace}
+                  disabled={!currentExpression || isProcessing}
+                  title="Delete last character"
+                  className="h-9 w-9 shrink-0 bg-slate-700 border-slate-600 hover:bg-slate-600 hover:text-white"
+                >
+                  <Delete className="h-4 w-4" />
+                </Button>
             </div>
-            
-            {/* Validation Status */}
-            {!validationResult.isValid && (
-              <div className="p-2 bg-red-900/50 border border-red-700 rounded text-xs">
-                <div className="flex items-center gap-2 mb-1">
-                  <AlertCircle className="h-4 w-4 text-red-400" />
-                  <span className="font-semibold">LaTeX Issues Found:</span>
-                </div>
-                <ul className="list-disc list-inside space-y-1 text-red-300">
-                  {validationResult.errors.map((error, index) => (
-                    <li key={index}>{error}</li>
-                  ))}
-                </ul>
+
+            <div className="rounded-md border border-slate-700 bg-white px-2 py-1.5">
+              <div className="min-h-[2rem] flex items-center justify-center text-black text-base overflow-x-auto app-scrollbar-light">
+                {renderLatexPreview(currentExpression)}
               </div>
-            )}
-            
-            {validationResult.isValid && currentExpression && (
-              <div className="flex items-center gap-2 p-2 bg-green-900/50 border border-green-700 rounded text-xs text-green-300">
-                <CheckCircle className="h-4 w-4" />
-                <span>Expression is valid</span>
+            </div>
+
+            {!validationResult.isValid && (
+              <div className="flex items-start gap-2 rounded-md border border-red-700/70 bg-red-900/40 px-2.5 py-1.5 text-xs text-red-200">
+                <AlertCircle className="h-3.5 w-3.5 shrink-0 mt-px text-red-400" />
+                <span>{validationResult.errors[0]}{validationResult.errors.length > 1 ? ` (+${validationResult.errors.length - 1} more)` : ''}</span>
               </div>
             )}
 
           <div className="flex gap-2">
-            <Button 
+            <Button
               onClick={handleSendExpression}
-              disabled={!currentExpression.trim() || isProcessing}
-              className="flex items-center gap-2 flex-1"
+              disabled={!currentExpression.trim() || isProcessing || !targetLabel}
+              title={!targetLabel ? 'Click a question field first' : `Insert into ${targetLabel}`}
+              className="flex items-center gap-2 flex-1 h-9 bg-purple-600 hover:bg-purple-500 text-white"
             >
               <Send className="h-4 w-4" />
-              {isProcessing ? 'Processing...' : 'Send'}
+              {isProcessing ? 'Checking...' : 'Insert'}
             </Button>
-            <Button 
-              variant="outline" 
+            <Button
+              variant="outline"
               onClick={handleClear}
               disabled={!currentExpression}
-              className="flex-1 bg-slate-700 border-slate-600 hover:bg-slate-600"
+              className="h-9 bg-slate-700 border-slate-600 hover:bg-slate-600 hover:text-white"
             >
               Clear
             </Button>
-          </div>
-                    
-          <div className="p-3 bg-slate-900 border border-slate-700 rounded-md">
-              <div className="text-xs text-muted-foreground mb-2">Preview:</div>
-              <div className="min-h-[40px] flex items-center justify-center p-2 bg-gray-50 rounded text-black">
-                {renderLatexPreview(currentExpression)}
-              </div>
-          </div>
-          
-          <div className="text-xs text-muted-foreground">
-            <p>Expression: <code className="bg-slate-700 px-2 py-1 rounded border border-slate-600 font-mono text-xs break-all">{currentExpression || "(empty)"}</code></p>
           </div>
         </div>
 
         {expressionCategories.map((category) => {
           const isExpanded = expandedCategories.has(category.category);
-          
+
           return (
-            <div key={category.category} className="border rounded-lg border-slate-700">
+            <div key={category.category} className="border rounded-lg border-slate-700 overflow-hidden">
               <button
                 onClick={() => toggleCategory(category.category)}
-                className="w-full flex items-center justify-between p-3 hover:bg-slate-800 rounded-lg transition-colors"
+                className="w-full flex items-center justify-between px-3 py-2 hover:bg-slate-800 transition-colors"
               >
-                <span className="font-semibold text-sm">{category.category}</span>
+                <span className="font-semibold text-[13px]">{category.category}</span>
                 <div className="flex items-center gap-2">
-                  <span className="text-xs text-muted-foreground">
+                  <span className="rounded-full bg-slate-700/80 px-1.5 py-px text-[11px] text-slate-300">
                     {category.expressions.length}
                   </span>
                   {isExpanded ? (
-                    <ChevronUp className="h-4 w-4" />
+                    <ChevronUp className="h-4 w-4 text-slate-400" />
                   ) : (
-                    <ChevronDown className="h-4 w-4" />
+                    <ChevronDown className="h-4 w-4 text-slate-400" />
                   )}
                 </div>
               </button>
-              
+
               {isExpanded && (
-                <div className="p-3 pt-0">
-                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                <div className="px-2.5 pb-2.5">
+                  <div className="grid grid-cols-3 gap-1.5">
                     {category.expressions.map((expr, index) => (
                       <Button
                         key={`${expr.value}-${index}`}
                         variant="outline"
                         size="sm"
-                        className="h-auto py-2 px-2 justify-center items-center min-h-[3rem] flex flex-col bg-slate-800 border-slate-700 hover:bg-slate-700 text-white"
+                        className="h-auto min-h-[3.25rem] flex-col gap-1 px-1 py-1.5 bg-slate-800 border-slate-700 hover:bg-slate-700 hover:border-slate-500 text-white"
                         onClick={() => handleSymbolClick(expr.value)}
-                        title={expr.label}
+                        title={`Add ${expr.label}`}
                       >
-                        <div className="text-xs text-muted-foreground mb-1">
-                          {expr.label}
-                        </div>
-                        <div className="text-sm">
+                        <div className="text-base leading-none max-w-full overflow-hidden">
                           {renderLatexPreview(expr.latex || expr.value)}
+                        </div>
+                        <div className="text-[10px] leading-none text-slate-400 truncate max-w-full">
+                          {expr.label}
                         </div>
                       </Button>
                     ))}
@@ -362,15 +377,25 @@ export default function MathExpressions({ onInsert }: MathExpressionsProps) {
             </div>
           );
         })}
-        
-        <div className="p-3 bg-blue-900/50 border border-blue-700 rounded-lg text-xs text-blue-300">
-          <p className="font-semibold mb-2">💡 How to use:</p>
-          <ul className="list-disc list-inside space-y-1">
-            <li>Simple numbers and equations don't need LaTeX</li>
-            <li>Use templates for complex expressions</li>
-            <li>Plain text: <code>15</code>, <code>2+2=4</code></li>
-            <li>LaTeX for advanced math: <code>\frac{1}{2}</code>, <code>x^{2}</code></li>
-          </ul>
+
+        <div className="rounded-lg border border-blue-800/60 bg-blue-900/20 overflow-hidden">
+          <button
+            onClick={() => setShowTips((v) => !v)}
+            className="flex w-full items-center justify-between px-3 py-2 text-xs font-semibold text-blue-200 hover:bg-blue-900/30 transition-colors"
+          >
+            <span className="flex items-center gap-1.5">
+              <Lightbulb className="h-3.5 w-3.5" />
+              How to use
+            </span>
+            {showTips ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+          </button>
+          {showTips && (
+            <ul className="list-disc list-inside space-y-1 px-3 pb-3 text-xs text-blue-200/90">
+              <li>Click a question field, build the expression, press Insert (or Enter)</li>
+              <li>Plain text like <code className="bg-slate-700 px-1 rounded font-mono">2+2=4</code> needs no LaTeX</li>
+              <li>Advanced math uses LaTeX: <code className="bg-slate-700 px-1 rounded font-mono">\frac{1}{2}</code>, <code className="bg-slate-700 px-1 rounded font-mono">x^{"{"}2{"}"}</code></li>
+            </ul>
+          )}
         </div>
       </CardContent>
     </Card>

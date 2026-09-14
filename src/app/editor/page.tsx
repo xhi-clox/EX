@@ -11,8 +11,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Card, CardHeader, CardContent, CardTitle } from '@/components/ui/card';
-import { Plus, Type, Pilcrow, Image as ImageIcon, Trash2, ArrowUp, ArrowDown, ListOrdered, TableIcon, PlusCircle, MinusCircle, BookMarked, Minus, Sparkles, LogOut, Save } from 'lucide-react';
+import { Card, CardContent } from '@/components/ui/card';
+import { Plus, Type, Pilcrow, Image as ImageIcon, Trash2, ArrowUp, ArrowDown, ListOrdered, TableIcon, PlusCircle, MinusCircle, BookMarked, Minus, Sparkles, LogOut, Save, ChevronDown, ChevronUp } from 'lucide-react';
 import { Textarea } from '@/components/ui/textarea';
 import Link from 'next/link';
 import { useSearchParams, useRouter } from 'next/navigation';
@@ -94,7 +94,9 @@ const ensureUniqueIds = (questions: Question[]): Question[] => {
 
 
 
-export type NumberingFormat = 'bangla-alpha' | 'bangla-numeric' | 'roman';
+export type NumberingFormat = 'english-numeric' | 'bangla-alpha' | 'bangla-numeric' | 'roman';
+
+export type MainNumberingFormat = 'english-numeric' | 'bangla-numeric' | 'roman';
 
 export interface Question {
   id: string;
@@ -107,6 +109,7 @@ export interface Question {
   tableData?: string[][];
   rows?: number;
   cols?: number;
+  showHints?: boolean;
 }
 
 export interface Paper {
@@ -119,6 +122,7 @@ export interface Paper {
   totalMarks: number;
   questions: Question[];
   notes?: string;
+  mainNumberingFormat?: MainNumberingFormat;
 }
 
 export interface PaperSettings {
@@ -133,6 +137,16 @@ export type PageContent = {
     mainQuestion: Question;
     subQuestions: Question[];
     showMainContent: boolean;
+}
+
+export interface HalfPayload {
+  content: PageContent[];
+  isFirstPage: boolean;
+}
+
+export interface BookletSpread {
+  left: HalfPayload | null;
+  right: HalfPayload | null;
 }
 
 const initialPaperData: Omit<Paper, 'id'> = {
@@ -208,7 +222,8 @@ function EditorPage() {
   
   const [pages, setPages] = useState<PageContent[][]>([]);
   const [isDownloading, setIsDownloading] = useState(false);
-  const [bookletPages, setBookletPages] = useState<{left: string|null; right: string|null}[]>([]);
+  const [showAddQuestions, setShowAddQuestions] = useState(true);
+  const [bookletPages, setBookletPages] = useState<BookletSpread[]>([]);
   const hiddenRenderRef = useRef<HTMLDivElement>(null);
   const [settings, setSettings] = useState<PaperSettings>({ 
     margins: { top: 10, bottom: 10, left: 10, right: 10 },
@@ -339,6 +354,37 @@ function EditorPage() {
       const newCursorPos = selectionStart + expression.length;
       element.setSelectionRange(newCursorPos, newCursorPos);
     }, 0);
+  };
+
+  const getFocusedFieldLabel = (): string | null => {
+    if (!focusedInput || !paper) return null;
+    const parts = focusedInput.id.split('-');
+    const kind = parts[0];
+    const qNum = (idx: number) => paper.questions.slice(0, idx + 1).filter(q => q.type !== 'section-header').length;
+    if ((kind === 'content' || kind === 'marks') && parts.length === 2) {
+      for (let qi = 0; qi < paper.questions.length; qi++) {
+        const q = paper.questions[qi];
+        if (q.type === 'section-header' && q.id === parts[1]) return 'section title';
+        if (q.id === parts[1]) return `Q${qNum(qi)}${kind === 'marks' ? ' marks' : ''}`;
+        const si = q.subQuestions?.findIndex(sq => sq.id === parts[1]) ?? -1;
+        if (si !== -1) return `Q${qNum(qi)} → ${getNumbering(q.numberingFormat, si)}`;
+      }
+      return 'question field';
+    }
+    if (kind === 'option' && parts.length >= 3) {
+      const qi = paper.questions.findIndex(q => q.id === parts[1]);
+      if (qi === -1) return 'question field';
+      if (parts.length === 3) return `Q${qNum(qi)} option`;
+      const si = paper.questions[qi].subQuestions?.findIndex(sq => sq.id === parts[2]) ?? -1;
+      if (si === -1) return `Q${qNum(qi)} option`;
+      return `Q${qNum(qi)} → ${getNumbering(paper.questions[qi].numberingFormat, si)} option`;
+    }
+    if (kind === 'table' && parts.length === 4) {
+      const qi = paper.questions.findIndex(q => q.id === parts[1]);
+      if (qi === -1) return 'question field';
+      return `Q${qNum(qi)} table R${Number(parts[2]) + 1}C${Number(parts[3]) + 1}`;
+    }
+    return 'question field';
   };
   
   const handlePaperDetailChange = (field: keyof Paper, value: string | number) => {
@@ -475,6 +521,28 @@ function EditorPage() {
         }
     }));
   };
+
+  const toggleHints = (questionId: string) => {
+    setPaper(prev => produce(prev, draft => {
+        if (!draft) return;
+        const q = draft.questions.find(q => q.id === questionId);
+        if (q) {
+            if (q.showHints === false) {
+                q.showHints = true;
+                if (!q.tableData || q.tableData.length === 0) {
+                    q.rows = 2;
+                    q.cols = 4;
+                    q.tableData = [
+                        ['hint 1', 'hint 2', 'hint 3', 'hint 4'],
+                        ['hint 5', 'hint 6', 'hint 7', 'hint 8'],
+                    ];
+                }
+            } else {
+                q.showHints = false;
+            }
+        }
+    }));
+  };
   
   const addRow = (questionId: string) => {
     setPaper(prev => produce(prev, draft => {
@@ -538,6 +606,8 @@ function EditorPage() {
     };
 
     switch (format) {
+      case 'english-numeric':
+        return String(index + 1);
       case 'bangla-numeric':
         return (index + 1).toString().split('').map(d => banglaNumerals[parseInt(d)]).join('');
       case 'roman':
@@ -598,9 +668,16 @@ function EditorPage() {
           newQuestion.subQuestions.push({ id: generateId('sq'), type: 'short', content: 'প্রয়োগমূলক', marks: 3});
           newQuestion.subQuestions.push({ id: generateId('sq'), type: 'short', content: 'উচ্চতর দক্ষতামূলক', marks: 4});
           break;
-        case 'fill-in-the-blanks':
-          newQuestion.content = 'খালি জায়গা পূরণ কর:';
+case 'fill-in-the-blanks':
+          newQuestion.content = 'খালি জায়গা পূরণ কর:';
           newQuestion.marks = 5;
+          newQuestion.showHints = true;
+          newQuestion.rows = 2;
+          newQuestion.cols = 4;
+          newQuestion.tableData = [
+            ['hint 1', 'hint 2', 'hint 3', 'hint 4'],
+            ['hint 5', 'hint 6', 'hint 7', 'hint 8'],
+          ];
           newQuestion.subQuestions.push({ id: generateId('sq'), type: 'fill-in-the-blanks', content: 'নতুন লাইন...', marks: 1});
           break;
         case 'short':
@@ -700,7 +777,7 @@ function EditorPage() {
         <Card key={question.id} className="group relative p-4 space-y-3 bg-slate-50 dark:bg-slate-900">
           <QuestionActions index={index} />
           <div className="flex items-start justify-between">
-            <Label className="font-bold pt-1.5">{`${questionNumber}.`}</Label>
+            <Label className="font-bold pt-1.5">{`${getNumbering(paper.mainNumberingFormat ?? 'english-numeric', questionNumber - 1)}.`}</Label>
             <div className="flex-1 ml-2">
                  <Textarea 
                     value={question.content}
@@ -742,6 +819,7 @@ function EditorPage() {
                       <SelectValue placeholder="Format" />
                     </SelectTrigger>
                     <SelectContent>
+                      <SelectItem value="english-numeric">1, 2, 3</SelectItem>
                       <SelectItem value="bangla-alpha">ক, খ, গ</SelectItem>
                       <SelectItem value="bangla-numeric">১, ২, ৩</SelectItem>
                       <SelectItem value="roman">i, ii, iii</SelectItem>
@@ -823,13 +901,56 @@ function EditorPage() {
         </>
     );
 
+      const tableEditor = () => (
+        <>
+          <div className="flex gap-2 mb-2">
+             <Button size="sm" variant="outline" onClick={() => addRow(question.id)}><PlusCircle className="mr-2 size-4" /> Add Row</Button>
+             <Button size="sm" variant="outline" onClick={() => removeRow(question.id)}><MinusCircle className="mr-2 size-4" /> Remove Row</Button>
+             <Button size="sm" variant="outline" onClick={() => addCol(question.id)}><PlusCircle className="mr-2 size-4" /> Add Column</Button>
+             <Button size="sm" variant="outline" onClick={() => removeCol(question.id)}><MinusCircle className="mr-2 size-4" /> Remove Column</Button>
+          </div>
+          <div className="overflow-x-auto app-scrollbar">
+            <table className="w-full border-collapse border border-slate-400">
+              <tbody>
+                {question.tableData?.map((row, rowIndex) => (
+                  <tr key={rowIndex}>
+                    {row.map((cell, colIndex) => (
+                      <td key={colIndex} className="border border-slate-300 p-0">
+                        <Textarea
+                          value={cell}
+                          onFocus={(e) => handleFocus(e, `table-${question.id}-${rowIndex}-${colIndex}`)}
+                          onChange={(e) => handleTableCellChange(question.id, rowIndex, colIndex, e.target.value)}
+                          className="w-full h-full border-0 rounded-none focus-visible:ring-1 ring-inset focus-visible:ring-blue-400 bg-white dark:bg-slate-800"
+                          rows={2}
+                        />
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      );
+
     switch (question.type) {
         case 'passage':
             return questionCard(subQuestionRenderer('short'));
         case 'creative':
             return questionCard(subQuestionRenderer('short'));
         case 'fill-in-the-blanks':
-             return questionCard(subQuestionRenderer('fill-in-the-blanks'));
+             return questionCard(
+                <>
+                  <div className="flex gap-2 mb-2">
+                    <Button size="sm" variant="outline" onClick={() => toggleHints(question.id)}>
+                        {question.showHints === false ? <PlusCircle className="mr-2 size-4" /> : <MinusCircle className="mr-2 size-4" />}
+                        {question.showHints === false ? 'Hints যোগ করুন' : 'Hints লুকান'}
+                    </Button>
+                  </div>
+                  {question.showHints !== false && tableEditor()}
+                  {subQuestionRenderer('fill-in-the-blanks')}
+                </>
+             );
         case 'short':
           return questionCard(subQuestionRenderer('short'));
         case 'essay':
@@ -860,44 +981,7 @@ function EditorPage() {
               </div>
             );
         case 'table':
-            return questionCard((
-                <>
-                  <Textarea 
-                    value={question.content}
-                    onFocus={(e) => handleFocus(e, `content-${question.id}`)}
-                    onChange={(e) => handleQuestionChange(question.id, 'content', e.target.value)}
-                    className="bg-white dark:bg-slate-800"
-                    rows={2}
-                  />
-                  <div className="flex gap-2 mb-2">
-                     <Button size="sm" variant="outline" onClick={() => addRow(question.id)}><PlusCircle className="mr-2 size-4" /> Add Row</Button>
-                     <Button size="sm" variant="outline" onClick={() => removeRow(question.id)}><MinusCircle className="mr-2 size-4" /> Remove Row</Button>
-                     <Button size="sm" variant="outline" onClick={() => addCol(question.id)}><PlusCircle className="mr-2 size-4" /> Add Column</Button>
-                     <Button size="sm" variant="outline" onClick={() => removeCol(question.id)}><MinusCircle className="mr-2 size-4" /> Remove Column</Button>
-                  </div>
-                  <div className="overflow-x-auto">
-                    <table className="w-full border-collapse border border-slate-400">
-                      <tbody>
-                        {question.tableData?.map((row, rowIndex) => (
-                          <tr key={rowIndex}>
-                            {row.map((cell, colIndex) => (
-                              <td key={colIndex} className="border border-slate-300 p-0">
-                                <Textarea
-                                  value={cell}
-                                  onFocus={(e) => handleFocus(e, `table-${question.id}-${rowIndex}-${colIndex}`)}
-                                  onChange={(e) => handleTableCellChange(question.id, rowIndex, colIndex, e.target.value)}
-                                  className="w-full h-full border-0 rounded-none focus-visible:ring-1 ring-inset focus-visible:ring-blue-400 bg-white dark:bg-slate-800"
-                                  rows={2}
-                                />
-                              </td>
-                            ))}
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </>
-              ));
+            return questionCard(tableEditor());
         default:
             return null;
     }
@@ -1059,6 +1143,25 @@ function EditorPage() {
                 usedHeight += subHeight;
             }
 
+             // Case 4: Table element (type 'table')
+             const tableEl = questionEl.querySelector<HTMLElement>('[data-table-element]');
+             if (tableEl) {
+                 const cs = window.getComputedStyle(tableEl);
+                 const tableHeight = tableEl.offsetHeight + parseFloat(cs.marginTop) + parseFloat(cs.marginBottom);
+
+                 if (usedHeight + tableHeight > pageInnerHeight && currentPageContent.length > 0) {
+                     flushPage();
+                     usedHeight = newPages.length === 0 ? headerHeight : 0;
+                 }
+
+                 let existingItem = currentPageContent.find(item => item.mainQuestion.id === qId);
+                 if (!existingItem) {
+                     existingItem = { mainQuestion: questionObj, subQuestions: [], showMainContent: true };
+                     currentPageContent.push(existingItem);
+                 }
+                 usedHeight += tableHeight;
+             }
+
              // Case 3: No sub-questions (e.g. section headers)
             if (subQuestionEls.length === 0 && !mainContentEl) {
                  const cs = window.getComputedStyle(questionEl);
@@ -1109,11 +1212,12 @@ function EditorPage() {
 
 
   return (
-    <>
+    <div className="flex h-screen flex-col overflow-hidden bg-background">
       <EditorHeader 
         paper={paper}
         settings={settings}
         setSettings={setSettings}
+        setPaper={setPaper}
         pages={pages}
         handleSave={handleSave}
         handleExit={handleExit}
@@ -1122,8 +1226,8 @@ function EditorPage() {
         bookletPages={bookletPages}
         setBookletPages={setBookletPages}
       />
-      <div className="flex h-[calc(100vh-3.5rem)]">
-        <main className="flex-1 overflow-y-auto bg-slate-200 dark:bg-gray-800 p-4">
+      <div className="flex min-h-0 flex-1 overflow-hidden">
+        <main className="min-h-0 flex-1 overflow-y-auto contain-layout app-scrollbar bg-slate-200 dark:bg-gray-800 p-4">
               <div className="space-y-4">
                   <div className="bg-white dark:bg-slate-800/50 p-6 space-y-6 shadow-lg rounded-lg">
                       <div className="space-y-4">
@@ -1196,13 +1300,34 @@ function EditorPage() {
               </div>
         </main>
 
-        <aside className="w-[400px] flex-shrink-0 flex flex-col gap-6 overflow-y-auto bg-slate-800 p-4 pt-6 gradient-scrollbar">
-            {/* Add Questions */}
-            <Card className="bg-slate-900 border-slate-700">
-              <CardHeader>
-                <CardTitle className="text-white">প্রশ্ন যোগ করুন</CardTitle>
-              </CardHeader>
-              <CardContent className="flex flex-col gap-2">
+        {/* Right rail: layout-contained so its internal scroll never grows page scroll.
+            The scroll container is a plain block wrapper: a flex scroll container
+            ignores mouse-wheel scrolling in Chromium. */}
+        <aside className="w-[400px] min-h-0 flex-shrink-0 flex flex-col contain-layout bg-slate-800">
+         <div className="min-h-0 flex-1 overflow-y-auto app-scrollbar">
+          <div className="space-y-6 p-4 pt-6">
+            {/* Add Questions (collapsible so the math panel stays reachable) */}
+            <Card className="bg-slate-900 border-slate-700 overflow-hidden">
+              <button
+                onClick={() => setShowAddQuestions((v) => !v)}
+                className="w-full flex items-center justify-between px-4 py-3 hover:bg-slate-800/60 transition-colors"
+              >
+                <span className="text-white font-semibold">প্রশ্ন যোগ করুন</span>
+                <span className="flex items-center gap-2">
+                  {paper && paper.questions.length > 0 && (
+                    <span className="rounded-full bg-slate-700/80 px-1.5 py-px text-[11px] text-slate-300">
+                      {paper.questions.length}
+                    </span>
+                  )}
+                  {showAddQuestions ? (
+                    <ChevronUp className="h-4 w-4 text-slate-400" />
+                  ) : (
+                    <ChevronDown className="h-4 w-4 text-slate-400" />
+                  )}
+                </span>
+              </button>
+              {showAddQuestions && (
+              <CardContent className="flex flex-col gap-2 px-4 pb-4">
                 <Button variant="outline" onClick={() => addQuestion('section-header')} className="bg-slate-800 border-slate-600 text-white hover:bg-slate-700 hover:text-white"><Minus className="mr-2 size-4" /> বিভাগ যোগ করুন</Button>
                 <Button variant="outline" onClick={() => addQuestion('creative')} className="bg-slate-800 border-slate-600 text-white hover:bg-slate-700 hover:text-white"><BookMarked className="mr-2 size-4" /> সৃজনশীল প্রশ্ন</Button>
                 <Button variant="outline" onClick={() => addQuestion('passage')} className="bg-slate-800 border-slate-600 text-white hover:bg-slate-700 hover:text-white"><Pilcrow className="mr-2 size-4" /> অনুচ্ছেদ</Button>
@@ -1221,9 +1346,12 @@ function EditorPage() {
                   </Button>
                 </Link>
               </CardContent>
+              )}
             </Card>
 
-            <MathExpressions onInsert={handleInsertExpression} />
+            <MathExpressions onInsert={handleInsertExpression} targetLabel={getFocusedFieldLabel()} />
+          </div>
+         </div>
         </aside>
 
         {/* Hidden div for calculations */}
@@ -1231,7 +1359,7 @@ function EditorPage() {
             <div ref={hiddenRenderRef}></div>
         </div>
       </div>
-    </>
+    </div>
   );
 }
 
