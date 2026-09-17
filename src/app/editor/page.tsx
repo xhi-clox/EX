@@ -22,6 +22,11 @@ import { produce } from 'immer';
 import { createRoot } from 'react-dom/client';
 import { useToast } from '@/hooks/use-toast';
 import { PaperPage } from './PaperPreview';
+import PaperPreview from './PaperPreview';
+import { MIN_BOTTOM_PADDING_MM } from './paper-render';
+import { imageFilterCss, imageGroupStyle, imageItemStyle, getQuestionImages, type QuestionImage } from './image-style';
+import { defaultHeaderTemplate, type HeaderRow } from './header-template';
+import HeaderBuilder from './HeaderBuilder';
 import 'katex/dist/katex.min.css';
 import LatexRenderer from './LatexRenderer';
 import { useProjects } from '@/hooks/use-projects';
@@ -92,24 +97,71 @@ const ensureUniqueIds = (questions: Question[]): Question[] => {
     return draft;
 };
 
+// Read a picked image file and (if it is large) downscale it on a canvas so the
+// stored data URL stays small enough for localStorage and quick PDF rendering.
+const readImageAsDataUrl = (file: File, maxDim = 1600, quality = 0.85): Promise<string> =>
+    new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onerror = () => reject(new Error('Could not read image file'));
+        reader.onload = () => {
+            const src = reader.result as string;
+            const img = new Image();
+            img.onerror = () => resolve(src);
+            img.onload = () => {
+                const longest = Math.max(img.width, img.height);
+                const scale = longest > maxDim ? maxDim / longest : 1;
+                if (scale >= 1 && file.size < 400 * 1024) {
+                    resolve(src);
+                    return;
+                }
+                const canvas = document.createElement('canvas');
+                canvas.width = Math.max(1, Math.round(img.width * scale));
+                canvas.height = Math.max(1, Math.round(img.height * scale));
+                const ctx = canvas.getContext('2d');
+                if (!ctx) {
+                    resolve(src);
+                    return;
+                }
+                ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                const isPng = file.type === 'image/png';
+                resolve(canvas.toDataURL(isPng ? 'image/png' : 'image/jpeg', quality));
+            };
+            img.src = src;
+        };
+        reader.readAsDataURL(file);
+    });
+
 
 
 export type NumberingFormat = 'english-numeric' | 'bangla-alpha' | 'bangla-numeric' | 'roman';
 
 export type MainNumberingFormat = 'english-numeric' | 'bangla-numeric' | 'roman';
 
+export type MarksFormat = 'bangla-numeric' | 'english-numeric';
+
 export interface Question {
   id: string;
-  type: 'passage' | 'fill-in-the-blanks' | 'short' | 'mcq' | 'essay' | 'table' | 'creative' | 'section-header';
+  type: 'passage' | 'fill-in-the-blanks' | 'short' | 'mcq' | 'essay' | 'table' | 'creative' | 'section-header' | 'image';
   content: string;
   marks?: number;
   options?: { id: string; text: string }[];
   subQuestions?: Question[];
   numberingFormat?: NumberingFormat;
   tableData?: string[][];
+  tableColWidths?: number[];
+  tableRowHeights?: number[];
+  tableMarginLeft?: number;
   rows?: number;
   cols?: number;
   showHints?: boolean;
+  imageData?: string;
+  images?: QuestionImage[];
+  imageWidth?: number;
+  imageAlign?: 'left' | 'center' | 'right';
+  imageGrayscale?: number;
+  imageBrightness?: number;
+  imageContrast?: number;
+  imageLight?: number;
 }
 
 export interface Paper {
@@ -123,6 +175,8 @@ export interface Paper {
   questions: Question[];
   notes?: string;
   mainNumberingFormat?: MainNumberingFormat;
+  marksFormat?: MarksFormat;
+  headerTemplate?: HeaderRow[];
 }
 
 export interface PaperSettings {
@@ -133,10 +187,18 @@ export interface PaperSettings {
   lineHeight: number;
 }
 
+export type SubPart = {
+    sub: Question;
+    content: boolean;
+    optionRows: readonly [number, number] | null;
+};
+
 export type PageContent = {
     mainQuestion: Question;
-    subQuestions: Question[];
+    subParts: SubPart[];
     showMainContent: boolean;
+    tableRows: readonly [number, number] | null;
+    optionRows: readonly [number, number] | null;
 }
 
 export interface HalfPayload {
@@ -157,6 +219,7 @@ const initialPaperData: Omit<Paper, 'id'> = {
   timeAllowed: '3 Hours',
   totalMarks: 100,
   questions: [],
+  headerTemplate: defaultHeaderTemplate(),
 };
 
 
@@ -218,13 +281,80 @@ function EditorPage() {
 
   }, [projectId, getProject, router, toast, isLoaded]);
 
+  // --- Undo/Redo history (snapshot-based) ---
+  // historyRef: past states ending with the present at the last index.
+  // futureRef: re-doable states. Every paper change adds a snapshot via the effect below,
+  // so no individual setPaper call needs to be wrapped.
+  const paperHistoryRef = useRef<Paper[]>([]);
+  const paperFutureRef = useRef<Paper[]>([]);
+  const skipHistoryPushRef = useRef(false);
+  const [canUndo, setCanUndo] = useState(false);
+  const [canRedo, setCanRedo] = useState(false);
+
+  useEffect(() => {
+    if (!paper) return;
+    if (skipHistoryPushRef.current) {
+      skipHistoryPushRef.current = false;
+    } else {
+      paperHistoryRef.current.push(paper);
+      if (paperHistoryRef.current.length > 100) paperHistoryRef.current.shift();
+      paperFutureRef.current = [];
+    }
+    setCanUndo(paperHistoryRef.current.length > 1);
+    setCanRedo(paperFutureRef.current.length > 0);
+  }, [paper]);
+
+  const undo = () => {
+    if (paperHistoryRef.current.length <= 1) return;
+    const current = paperHistoryRef.current[paperHistoryRef.current.length - 1];
+    paperHistoryRef.current = paperHistoryRef.current.slice(0, -1);
+    paperFutureRef.current.unshift(current);
+    skipHistoryPushRef.current = true;
+    setPaper(paperHistoryRef.current[paperHistoryRef.current.length - 1]);
+    setCanUndo(paperHistoryRef.current.length > 1);
+    setCanRedo(paperFutureRef.current.length > 0);
+  };
+
+  const redo = () => {
+    if (paperFutureRef.current.length === 0) return;
+    const restored = paperFutureRef.current.shift() as Paper;
+    paperHistoryRef.current.push(restored);
+    skipHistoryPushRef.current = true;
+    setPaper(restored);
+    setCanUndo(paperHistoryRef.current.length > 1);
+    setCanRedo(paperFutureRef.current.length > 0);
+  };
+
+  // Keyboard shortcuts: Ctrl+Z = undo, Ctrl+Shift+Z / Ctrl+Y = redo, Ctrl+S = save
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+        e.preventDefault();
+        handleSave();
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+        e.preventDefault();
+        if (e.shiftKey) redo();
+        else undo();
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') {
+        e.preventDefault();
+        redo();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  });
+
   const [focusedInput, setFocusedInput] = useState<{ element: HTMLTextAreaElement | HTMLInputElement; id: string } | null>(null);
   
   const [pages, setPages] = useState<PageContent[][]>([]);
   const [isDownloading, setIsDownloading] = useState(false);
   const [showAddQuestions, setShowAddQuestions] = useState(true);
+  const [isPreview, setIsPreview] = useState(false);
   const [bookletPages, setBookletPages] = useState<BookletSpread[]>([]);
   const hiddenRenderRef = useRef<HTMLDivElement>(null);
+  const imageFileInputRef = useRef<HTMLInputElement>(null);
+  type ImageTarget = { kind: 'append'; questionId: string } | { kind: 'replace'; questionId: string; imageId: string };
+  const [imageTarget, setImageTarget] = useState<ImageTarget | null>(null);
   const [settings, setSettings] = useState<PaperSettings>({ 
     margins: { top: 10, bottom: 10, left: 10, right: 10 },
     width: 560, 
@@ -237,19 +367,35 @@ function EditorPage() {
     if (paper && projectId) {
       try {
         const storageKey = `paper_${projectId}`;
-        localStorage.setItem(storageKey, JSON.stringify(paper));
+        const serialized = JSON.stringify(paper);
+        
+        // Check localStorage size before saving (5MB limit for most browsers)
+        const sizeInMB = new Blob([serialized]).size / (1024 * 1024);
+        if (sizeInMB > 4) {
+          toast({
+            variant: "destructive",
+            title: "Paper Too Large",
+            description: `Your paper is ${sizeInMB.toFixed(1)}MB. Please remove images or split into smaller papers.`,
+          });
+          return;
+        }
+        
+        localStorage.setItem(storageKey, serialized);
         updateProject(projectId, { name: paper.examTitle, subject: paper.subject, class: paper.grade });
 
         toast({
           title: "Progress Saved",
-          description: "Your question paper has been saved.",
+          description: `Your question paper has been saved (${sizeInMB.toFixed(1)}MB).`,
         });
       } catch (e) {
         console.error("Failed to save paper to localStorage", e);
+        const errorMsg = e instanceof DOMException && e.code === 22 
+          ? "Paper is too large. Try removing images or creating a new paper." 
+          : "Could not save your paper. Please try again.";
         toast({
           variant: "destructive",
           title: "Save Failed",
-          description: "Could not save your paper. Please try again.",
+          description: errorMsg,
         });
       }
     }
@@ -393,6 +539,12 @@ function EditorPage() {
     }));
   };
 
+  const onHeaderTemplateChange = (rows: HeaderRow[]) => {
+    setPaper(prev => produce(prev, draft => {
+        if (draft) draft.headerTemplate = rows;
+    }));
+  };
+
   const handleQuestionChange = (id: string, field: keyof Question, value: any) => {
     setPaper(prev => produce(prev, draft => {
         if (!draft) return;
@@ -415,6 +567,151 @@ function EditorPage() {
             }
         }));
       };
+
+    const updateTableQuestion = (id: string, updater: (q: Question) => void) => {
+        setPaper(prev => produce(prev, draft => {
+            if (!draft) return;
+            const q = draft.questions.find(x => x.id === id);
+            if (q) updater(q);
+        }));
+    };
+
+    const handleImageFiles = async (files: FileList | null) => {
+        const target = imageTarget;
+        setImageTarget(null);
+        if (!files || files.length === 0) return;
+        const valid = Array.from(files).filter((f) => f.type.startsWith('image/'));
+        if (valid.length === 0) return;
+        try {
+            const dataUrls = await Promise.all(valid.map((f) => readImageAsDataUrl(f)));
+            setPaper(prev => produce(prev, draft => {
+                if (!draft) return;
+                if (target) {
+                    const question = draft.questions.find(q => q.id === target.questionId);
+                    if (!question) return;
+                    if (!question.images) {
+                        question.images = question.imageData ? [{ id: generateId('img'), data: question.imageData }] : [];
+                        question.imageData = undefined;
+                    }
+                    if (target.kind === 'replace') {
+                        const img = question.images.find(i => i.id === target.imageId);
+                        if (img) img.data = dataUrls[0];
+                        else question.images[question.images.length - 1].data = dataUrls[0];
+                        if (question.images.length === 0) question.images.push({ id: generateId('img'), data: dataUrls[0] });
+                    } else {
+                        for (const d of dataUrls) question.images.push({ id: generateId('img'), data: d });
+                        if (question.images.length > 1 && (question.imageWidth ?? 100) === 100) {
+                            question.imageWidth = 49;
+                        }
+                    }
+                } else {
+                    const added: Question[] = dataUrls.map(d => ({
+                        id: generateId('img'),
+                        type: 'image',
+                        content: '',
+                        images: [{ id: generateId('img'), data: d }],
+                        imageWidth: 100,
+                        imageAlign: 'center',
+                    }));
+                    draft.questions.push(...added);
+                }
+            }));
+            toast({ title: 'ছবি যোগ করা হয়েছে', description: `${valid.length}টি ছবি প্রশ্নপত্রে যুক্ত হয়েছে।` });
+        } catch (e) {
+            toast({ variant: 'destructive', title: 'ছবি যোগ করা যায়নি', description: 'ছবিটি পড়া সম্ভব হয়নি।' });
+        }
+    };
+
+    const pickImage = (target: ImageTarget | null) => {
+        setImageTarget(target);
+        imageFileInputRef.current?.click();
+    };
+
+    const onTableCellChange = (id: string, row: number, col: number, value: string) => {
+        updateTableQuestion(id, (q) => {
+            if (!q.tableData) return;
+            if (row < q.tableData.length && q.tableData[row]) q.tableData[row][col] = value;
+        });
+    };
+
+    const onTableAddRow = (id: string) => {
+        updateTableQuestion(id, (q) => {
+            if (!q.tableData) return;
+            const colCount = Math.max(1, q.tableData[0]?.length ?? 1);
+            q.tableData.push(Array(colCount).fill(''));
+        });
+    };
+
+    const onTableRemoveRow = (id: string, row: number) => {
+        updateTableQuestion(id, (q) => {
+            if (q.tableData) q.tableData.splice(row, 1);
+            if (q.tableRowHeights) q.tableRowHeights.splice(row, 1);
+        });
+    };
+
+    const onTableAddCol = (id: string) => {
+        updateTableQuestion(id, (q) => {
+            if (!q.tableData || q.tableData.length === 0) return;
+            q.tableData.forEach((r) => r.push(''));
+            if (q.tableColWidths) q.tableColWidths.push(0);
+        });
+    };
+
+    const onTableRemoveCol = (id: string, col: number) => {
+        updateTableQuestion(id, (q) => {
+            if (q.tableData) q.tableData.forEach((r) => r.splice(col, 1));
+            if (q.tableColWidths) q.tableColWidths.splice(col, 1);
+        });
+    };
+
+    const onTableResizeRow = (id: string, row: number, height: number) => {
+        updateTableQuestion(id, (q) => {
+            if (!q.tableRowHeights || q.tableRowHeights.length !== q.tableData?.length) {
+                q.tableRowHeights = Array(q.tableData?.length ?? 0).fill(0);
+            }
+            q.tableRowHeights[row] = height;
+        });
+    };
+
+    const onTableColWidths = (id: string, widths: number[]) => {
+        updateTableQuestion(id, (q) => {
+            const colCount = q.tableData?.[0]?.length ?? 0;
+            if (widths.length !== colCount) return;
+            q.tableColWidths = widths.map((w) => Math.max(0, Math.round(w)));
+        });
+    };
+
+    const onTableMarginLeftChange = (id: string, value: number) => {
+        updateTableQuestion(id, (q) => {
+            q.tableMarginLeft = Math.min(300, Math.max(0, Math.round(value)));
+        });
+    };
+
+    const tableEditCallbacks = {
+        onCellChange: onTableCellChange,
+        onAddRow: onTableAddRow,
+        onRemoveRow: onTableRemoveRow,
+        onAddCol: onTableAddCol,
+        onRemoveCol: onTableRemoveCol,
+        onResizeRow: onTableResizeRow,
+        onColWidths: onTableColWidths,
+        onMarginLeftChange: onTableMarginLeftChange,
+    };
+
+    const onImageChange = (id: string, patch: Partial<Question>) => {
+        updateTableQuestion(id, (q) => {
+            if (patch.imageWidth !== undefined) q.imageWidth = Math.min(100, Math.max(5, Math.round(patch.imageWidth)));
+            if (patch.imageAlign !== undefined) q.imageAlign = patch.imageAlign;
+            if (patch.imageGrayscale !== undefined) q.imageGrayscale = Math.min(100, Math.max(0, Math.round(patch.imageGrayscale)));
+            if (patch.imageBrightness !== undefined) q.imageBrightness = Math.min(200, Math.max(0, Math.round(patch.imageBrightness)));
+            if (patch.imageContrast !== undefined) q.imageContrast = Math.min(200, Math.max(0, Math.round(patch.imageContrast)));
+            if (patch.imageLight !== undefined) q.imageLight = Math.min(100, Math.max(10, Math.round(patch.imageLight)));
+        });
+    };
+
+    const imageEditCallbacks = {
+        onImageChange,
+    };
   
   const addSubQuestion = (questionId: string, type: Question['type'] = 'short') => {
     setPaper(prev => produce(prev, draft => {
@@ -730,7 +1027,17 @@ case 'fill-in-the-blanks':
 
   const addNote = () => {
     setPaper(prev => produce(prev, draft => {
-        if(draft) draft.notes = '(ক ও খ বিভাগ থেকে দুটি এবং গ ও ঘ বিভাগ থেকে ১টি সহ মোট ৭ টি প্রশ্নের উত্তর দাও)';
+        if (!draft) return;
+        draft.notes = '(ক ও খ বিভাগ থেকে দুটি এবং গ ও ঘ বিভাগ থেকে ১টি সহ মোট ৭ টি প্রশ্নের উত্তর দাও)';
+        draft.headerTemplate = draft.headerTemplate && draft.headerTemplate.length > 0
+            ? draft.headerTemplate
+            : defaultHeaderTemplate();
+        if (!draft.headerTemplate.some(row => row.cells.some(c => c.kind === 'notes'))) {
+            draft.headerTemplate = [
+                ...draft.headerTemplate,
+                { id: generateId('hr'), cells: [{ id: generateId('hc'), kind: 'notes', align: 'center', bold: true, size: 12 }] },
+            ];
+        }
     }));
   };
 
@@ -757,7 +1064,7 @@ case 'fill-in-the-blanks':
     if (!paper) return null;
     const isContainer = ['passage', 'fill-in-the-blanks', 'short', 'mcq', 'essay', 'creative'].includes(question.type);
     
-    const questionNumber = paper.questions.slice(0, index + 1).filter(q => q.type !== 'section-header').length;
+    const questionNumber = paper.questions.slice(0, index + 1).filter(q => q.type !== 'section-header' && q.type !== 'image').length;
 
     if (question.type === 'section-header') {
         return (
@@ -777,7 +1084,7 @@ case 'fill-in-the-blanks':
         <Card key={question.id} className="group relative p-4 space-y-3 bg-slate-50 dark:bg-slate-900">
           <QuestionActions index={index} />
           <div className="flex items-start justify-between">
-            <Label className="font-bold pt-1.5">{`${getNumbering(paper.mainNumberingFormat ?? 'english-numeric', questionNumber - 1)}.`}</Label>
+            <Label className="font-bold pt-1.5">{`${getNumbering(paper.mainNumberingFormat ?? 'bangla-numeric', questionNumber - 1)}.`}</Label>
             <div className="flex-1 ml-2">
                  <Textarea 
                     value={question.content}
@@ -934,6 +1241,141 @@ case 'fill-in-the-blanks':
       );
 
     switch (question.type) {
+        case 'image': {
+            const w = Math.min(100, Math.max(5, question.imageWidth ?? 100));
+            const align = question.imageAlign ?? 'center';
+            const grayscale = question.imageGrayscale ?? 0;
+            const brightness = question.imageBrightness ?? 100;
+            const contrast = question.imageContrast ?? 100;
+            const light = question.imageLight ?? 100;
+            const filter = imageFilterCss({ grayscale, brightness, contrast, light });
+            const images = getQuestionImages(question);
+            const setField = (field: keyof Question) => (e: React.ChangeEvent<HTMLInputElement>) =>
+                handleQuestionChange(question.id, field, Number(e.target.value));
+            const sliderRow = (label: string, value: number, min: number, max: number, field: keyof Question) => (
+                <div className="flex items-center gap-2">
+                    <Label className="w-20 text-sm">{label}</Label>
+                    <input
+                        type="range"
+                        min={min}
+                        max={max}
+                        step={1}
+                        value={value}
+                        onChange={setField(field)}
+                        className="h-3 flex-1 cursor-pointer"
+                    />
+                    <span className="w-10 text-right text-xs tabular-nums">{value}%</span>
+                </div>
+            );
+            const onRemoveImage = (imageId: string) => {
+                setPaper(prev => produce(prev, draft => {
+                    const q = draft?.questions.find(x => x.id === question.id);
+                    if (!q || !q.images) return;
+                    q.images = q.images.filter(i => i.id !== imageId);
+                    if (q.images.length === 1) {
+                        q.imageData = q.images[0].data;
+                        q.images = undefined;
+                    }
+                }));
+            };
+            return (
+                <Card key={question.id} className="group relative p-4 space-y-3 bg-slate-50 dark:bg-slate-900">
+                    <QuestionActions index={index} />
+                    <div className="flex items-center justify-between gap-2 pr-20">
+                        <Label className="font-bold">ছবি{images.length > 1 ? ` (${images.length}টি)` : ''}</Label>
+                        <div className="flex items-center gap-2">
+                            <Button variant="outline" size="sm" onClick={() => pickImage({ kind: 'append', questionId: question.id })}>
+                                <Plus className="mr-2 size-4" /> আরেকটি ছবি
+                            </Button>
+                            {images.length > 0 && (
+                                <Button variant="outline" size="sm" onClick={() => pickImage({ kind: 'replace', questionId: question.id, imageId: images[images.length - 1].id })}>
+                                    <ImageIcon className="mr-2 size-4" /> ছবি বদলান
+                                </Button>
+                            )}
+                        </div>
+                    </div>
+                    <div className="rounded-md border bg-white dark:bg-slate-800 p-2">
+                        {images.length > 0 ? (
+                            <div style={imageGroupStyle(align)}>
+                                {images.map(img => (
+                                    <div key={img.id} className="relative">
+                                        <img
+                                            src={img.data}
+                                            alt=""
+                                            style={imageItemStyle(images.length, w, filter)}
+                                        />
+                                        {images.length > 1 && (
+                                            <button
+                                                type="button"
+                                                title="ছবি মুছুন"
+                                                onClick={() => onRemoveImage(img.id)}
+                                                className="absolute -right-2 -top-2 flex h-5 w-5 items-center justify-center rounded-full bg-red-500 text-white shadow hover:bg-red-600"
+                                            >
+                                                <Minus className="size-3" />
+                                            </button>
+                                        )}
+                                    </div>
+                                ))}
+                            </div>
+                        ) : (
+                            <button
+                                type="button"
+                                onClick={() => pickImage({ kind: 'append', questionId: question.id })}
+                                className="flex w-full items-center justify-center gap-2 py-8 text-sm text-slate-400 hover:text-slate-600"
+                            >
+                                <ImageIcon className="size-5" /> ছবি নির্বাচন করুন
+                            </button>
+                        )}
+                    </div>
+                    <div className="flex flex-wrap items-center gap-4">
+                        <div className="flex items-center gap-2">
+                            <Label className="text-sm">প্রস্থ:</Label>
+                            <input
+                                type="range"
+                                min={5}
+                                max={100}
+                                step={1}
+                                value={w}
+                                onChange={(e) => handleQuestionChange(question.id, 'imageWidth', Number(e.target.value))}
+                                className="h-3 w-40 cursor-pointer"
+                            />
+                            <span className="w-10 text-right text-xs tabular-nums">{w}%</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <Label className="text-sm">অবস্থান:</Label>
+                            <Select value={align} onValueChange={(value) => handleQuestionChange(question.id, 'imageAlign', value)}>
+                                <SelectTrigger className="h-8 w-28 text-xs">
+                                    <SelectValue placeholder="অবস্থান" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="left">বাম</SelectItem>
+                                    <SelectItem value="center">মাঝখানে</SelectItem>
+                                    <SelectItem value="right">ডান</SelectItem>
+                                </SelectContent>
+                            </Select>
+                        </div>
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                                handleQuestionChange(question.id, 'imageGrayscale', 0);
+                                handleQuestionChange(question.id, 'imageBrightness', 100);
+                                handleQuestionChange(question.id, 'imageContrast', 100);
+                                handleQuestionChange(question.id, 'imageLight', 100);
+                            }}
+                        >
+                            রিসেট
+                        </Button>
+                    </div>
+                    <div className="grid grid-cols-1 gap-x-6 gap-y-2 sm:grid-cols-2">
+                        {sliderRow('গ্রেস্কেল', grayscale, 0, 100, 'imageGrayscale')}
+                        {sliderRow('ব্রাইটনেস', brightness, 0, 200, 'imageBrightness')}
+                        {sliderRow('কনট্রাস্ট', contrast, 0, 200, 'imageContrast')}
+                        {sliderRow('লাইট', light, 10, 100, 'imageLight')}
+                    </div>
+                </Card>
+            );
+        }
         case 'passage':
             return questionCard(subQuestionRenderer('short'));
         case 'creative':
@@ -990,15 +1432,16 @@ case 'fill-in-the-blanks':
   useLayoutEffect(() => {
     if (!paper) return;
   
-    // mm -> px (96dpi)
-    const mmToPx = (mm: number) => mm * 3.7795275591;
-  
-    // choose the selector that identifies each question block in the rendered PaperPage
-    const QUESTION_SELECTOR = '[data-question-id]';
-  
+    // Debounce pagination calculation to avoid recalculating on every keystroke (500ms)
     let cancelled = false;
-  
-    const calculatePages = async () => {
+    const debounceTimer = setTimeout(() => {
+      // mm -> px (96dpi)
+      const mmToPx = (mm: number) => mm * 3.7795275591;
+    
+      // choose the selector that identifies each question block in the rendered PaperPage
+      const QUESTION_SELECTOR = '[data-question-id]';
+    
+      const calculatePages = async () => {
       if (!hiddenRenderRef.current) {
         setPages([]);
         return;
@@ -1019,7 +1462,7 @@ case 'fill-in-the-blanks':
       root.render(
         <PaperPage
           paper={paper}
-          pageContent={paper.questions.map(q => ({ mainQuestion: q, subQuestions: q.subQuestions || [], showMainContent: true }))}
+          pageContent={paper.questions.map(q => ({ mainQuestion: q, subParts: (q.subQuestions || []).map(sub => ({ sub, content: true, optionRows: null })), showMainContent: true, tableRows: null, optionRows: null }))}
           isFirstPage={true}
           settings={settings}
           allQuestions={paper.questions}
@@ -1046,8 +1489,22 @@ case 'fill-in-the-blanks':
   
         if (cancelled) return;
   
-        // PAGE geometry (px). Convert margins from mm to px and subtract from height:
-        const pageInnerHeight = settings.height - (mmToPx(settings.margins.top) + mmToPx(settings.margins.bottom)) + 10; // Add 10px buffer
+        // PAGE geometry (px). Convert margins from mm to px and subtract from height.
+        // Reserve this many pixels below the last content line before the bottom margin.
+        // Increased to 60px (instead of 40px) to ensure all continuation pages (2+) don't
+        // appear fuller than page 1. This creates visual consistency across all pages.
+        const PAGE_BOTTOM_SAFETY_PX = 60;
+        const pageInnerHeight =
+          settings.height -
+          mmToPx(settings.margins.top) -
+          mmToPx(Math.max(settings.margins.bottom, MIN_BOTTOM_PADDING_MM));
+        // Keep a conservative reserve above the bottom margin line so content never
+        // crosses into the margin area and gets cut off. Every page maintains a 
+        // consistent, visible bottom margin. Page 1 has header space; pages 2+ are level.
+        const fillLimit = pageInnerHeight - PAGE_BOTTOM_SAFETY_PX;
+        // Every page starts its content at the same top offset (margins.top); no
+        // extra top padding is rendered on continuation pages, so a flush simply
+        // starts accounting from zero again.
         
         // get the rendered paper page root inside the temp container
         const renderedPaperPage = tempRenderContainer.querySelector('.paper-page') as HTMLElement | null;
@@ -1072,7 +1529,7 @@ case 'fill-in-the-blanks':
         };
   
         let headerHeight = 0;
-        const headerEl = renderedPaperPage.querySelector('.preview-header');
+        const headerEl = renderedPaperPage.querySelector<HTMLElement>('.preview-header');
         const topInfoElements = renderedPaperPage.querySelectorAll('.flex.justify-between.text-sm, .text-center.text-sm.font-semibold');
         
         if (newPages.length === 0) { // Only calculate for the first page
@@ -1096,82 +1553,161 @@ case 'fill-in-the-blanks':
 
             const mainContentEl = questionEl.querySelector<HTMLElement>('.question-content');
             const subQuestionEls = Array.from(questionEl.querySelectorAll<HTMLElement>('.subquestion-item'));
-            
-            // Case 1: Main content (stem)
-            if (mainContentEl) {
-                const cs = window.getComputedStyle(mainContentEl);
-                const mainHeight = mainContentEl.offsetHeight + parseFloat(cs.marginTop) + parseFloat(cs.marginBottom);
+            const tableEl = questionEl.querySelector<HTMLElement>('[data-table-element]');
+            const tableRowEls = tableEl ? Array.from(tableEl.querySelectorAll<HTMLElement>('[data-table-row]')) : [];
+            // Main-level option rows (options belonging to sub-questions live inside
+            // .subquestion-item and are handled with that sub-question).
+            const mainOptionRowEls = Array.from(questionEl.querySelectorAll<HTMLElement>('[data-option-row]'))
+                .filter(el => !el.closest('.subquestion-item'));
+            // The question wrapper carries mb-2; without counting it pages accumulate
+            // enough extra height to overflow the configured page height.
+            const wrapperMb = parseFloat(window.getComputedStyle(questionEl).marginBottom) || 0;
+            let wrapperTracked = false;
+            const trackWrapper = () => {
+                if (!wrapperTracked && wrapperMb > 0) {
+                    wrapperTracked = true;
+                    usedHeight += wrapperMb;
+                }
+            };
 
-                if (usedHeight + mainHeight > pageInnerHeight && currentPageContent.length > 0) {
-                    flushPage();
+            const outerHeight = (el: HTMLElement) => {
+                const cs = window.getComputedStyle(el);
+                // getBoundingClientRect().height is sub-pixel accurate; offsetHeight
+                // rounds to integers and accumulates enough drift over a page of many
+                // fragments that the real last line can poke past the bottom margin
+                // and get clipped by the strict, non-growing page height.
+                return el.getBoundingClientRect().height + (parseFloat(cs.marginTop) || 0) + (parseFloat(cs.marginBottom) || 0);
+            };
+
+            const ensureItem = (showMainContent: boolean) => {
+                let existing = currentPageContent.find(item => item.mainQuestion.id === qId);
+                if (!existing) {
+                    existing = { mainQuestion: questionObj, subParts: [], showMainContent, tableRows: null, optionRows: null };
+                    currentPageContent.push(existing);
+                }
+                return existing;
+            };
+
+            // Whether the stem is rendered on the page currently being filled. Used so
+            // fragments that continue on the next page do not re-render the stem.
+            let stemOnThisPage = false;
+
+             // Start a new page when the next fragment would overflow a non-empty one.
+const flushIfOver = (height: number) => {
+                if (usedHeight + height > fillLimit) {
+                    if (currentPageContent.length > 0) {
+                        flushPage();
+                        stemOnThisPage = false;
+                    }
                     usedHeight = newPages.length === 0 ? headerHeight : 0;
+                    return true;
                 }
-                
-                let existingItem = currentPageContent.find(item => item.mainQuestion.id === qId);
-                if (!existingItem) {
-                    existingItem = { mainQuestion: questionObj, subQuestions: [], showMainContent: true };
-                    currentPageContent.push(existingItem);
-                } else {
-                    existingItem.showMainContent = true;
-                }
+                return false;
+            };
+
+            const mergeRange = (prev: readonly [number, number] | null, index: number): [number, number] =>
+                prev && index === prev[1] + 1 ? [prev[0], index] : [index, index];
+
+            // Case 1: Main content (stem)
+            let stemItem: PageContent | null = null;
+            if (mainContentEl) {
+                const mainHeight = outerHeight(mainContentEl);
+                trackWrapper();
+                flushIfOver(mainHeight);
+                const item = ensureItem(true);
+                item.showMainContent = true;
+                stemItem = item;
+                stemOnThisPage = true;
                 usedHeight += mainHeight;
             }
 
-            // Case 2: Sub-questions
+            // Case 4: Built-in table rows (fill-in-the-blanks hints / substitution
+            // table). Each row is paginated independently so the table can start at the
+            // bottom of a page and continue on the next instead of jumping as a block.
+            for (let ri = 0; ri < tableRowEls.length; ri++) {
+                if (cancelled) break;
+                const rowHeight = outerHeight(tableRowEls[ri]);
+                trackWrapper();
+                flushIfOver(rowHeight);
+                const item = ensureItem(stemOnThisPage);
+                item.tableRows = mergeRange(item.tableRows, ri);
+                usedHeight += rowHeight;
+            }
+            // If every row moved to a later page the stem's page must render no table
+            // rows at all (an empty range) instead of silently repeating the full table.
+            if (tableRowEls.length > 0 && stemItem && stemItem.tableRows === null) {
+                stemItem.tableRows = [0, -1];
+            }
+
+            // Case 2: Sub-questions. The numbered line and every options row are
+            // separate fragments, so a long MCQ fills the remaining space and spills.
             for (const subEl of subQuestionEls) {
-                if(cancelled) break;
+                if (cancelled) break;
                 const subId = subEl.getAttribute('data-subquestion-id');
                 const subQuestionObj = questionObj.subQuestions?.find(sq => sq.id === subId);
                 if (!subQuestionObj) continue;
 
-                const cs = window.getComputedStyle(subEl);
-                const subHeight = subEl.offsetHeight + parseFloat(cs.marginTop) + parseFloat(cs.marginBottom);
-
-                if (usedHeight + subHeight > pageInnerHeight && currentPageContent.length > 0) {
-                    flushPage();
-                    usedHeight = newPages.length === 0 ? headerHeight : 0; 
+                const contentEl = subEl.querySelector<HTMLElement>('.subquestion-content');
+                let contentSubPart: SubPart | null = null;
+                if (contentEl) {
+                    const lineHeight = outerHeight(contentEl);
+                    trackWrapper();
+                    flushIfOver(lineHeight);
+                    const item = ensureItem(false);
+                    const existing = item.subParts.find(p => p.sub.id === subQuestionObj.id);
+                    if (existing) {
+                        existing.content = true;
+                        contentSubPart = existing;
+                    } else {
+                        contentSubPart = { sub: subQuestionObj, content: true, optionRows: null };
+                        item.subParts.push(contentSubPart);
+                    }
+                    usedHeight += lineHeight;
                 }
 
-                let existingItem = currentPageContent.find(item => item.mainQuestion.id === qId);
-                if (!existingItem) {
-                    existingItem = { mainQuestion: questionObj, subQuestions: [], showMainContent: false };
-                    currentPageContent.push(existingItem);
+                const subOptionRowEls = Array.from(subEl.querySelectorAll<HTMLElement>('[data-option-row]'));
+                for (let ri = 0; ri < subOptionRowEls.length; ri++) {
+                    if (cancelled) break;
+                    const rowHeight = outerHeight(subOptionRowEls[ri]);
+                    trackWrapper();
+                    flushIfOver(rowHeight);
+                    const item = ensureItem(false);
+                    const existing = item.subParts.find(p => p.sub.id === subQuestionObj.id);
+                    if (existing) {
+                        existing.optionRows = mergeRange(existing.optionRows, ri);
+                    } else {
+                        item.subParts.push({ sub: subQuestionObj, content: false, optionRows: [ri, ri] });
+                    }
+                    usedHeight += rowHeight;
                 }
-                if (!existingItem.subQuestions.some(sq => sq.id === subQuestionObj.id)) {
-                    existingItem.subQuestions.push(subQuestionObj);
+                // If all options moved to a later page, the sub-question's own page must
+                // render no options rather than the full (now duplicated) grid.
+                if (subOptionRowEls.length > 0 && contentSubPart && contentSubPart.optionRows === null) {
+                    contentSubPart.optionRows = [0, -1];
                 }
-                usedHeight += subHeight;
             }
 
-             // Case 4: Table element (type 'table')
-             const tableEl = questionEl.querySelector<HTMLElement>('[data-table-element]');
-             if (tableEl) {
-                 const cs = window.getComputedStyle(tableEl);
-                 const tableHeight = tableEl.offsetHeight + parseFloat(cs.marginTop) + parseFloat(cs.marginBottom);
+            // Case 1b: Main options grid rows (rendered after the sub-questions).
+            const gridBaseItem = currentPageContent.find(i => i.mainQuestion.id === qId);
+            for (let ri = 0; ri < mainOptionRowEls.length; ri++) {
+                if (cancelled) break;
+                const rowHeight = outerHeight(mainOptionRowEls[ri]);
+                trackWrapper();
+                flushIfOver(rowHeight);
+                const item = ensureItem(stemOnThisPage);
+                item.optionRows = mergeRange(item.optionRows, ri);
+                usedHeight += rowHeight;
+            }
+            if (mainOptionRowEls.length > 0 && gridBaseItem && gridBaseItem.optionRows === null) {
+                gridBaseItem.optionRows = [0, -1];
+            }
 
-                 if (usedHeight + tableHeight > pageInnerHeight && currentPageContent.length > 0) {
-                     flushPage();
-                     usedHeight = newPages.length === 0 ? headerHeight : 0;
-                 }
-
-                 let existingItem = currentPageContent.find(item => item.mainQuestion.id === qId);
-                 if (!existingItem) {
-                     existingItem = { mainQuestion: questionObj, subQuestions: [], showMainContent: true };
-                     currentPageContent.push(existingItem);
-                 }
-                 usedHeight += tableHeight;
-             }
-
-             // Case 3: No sub-questions (e.g. section headers)
-            if (subQuestionEls.length === 0 && !mainContentEl) {
-                 const cs = window.getComputedStyle(questionEl);
-                 const elHeight = questionEl.offsetHeight + parseFloat(cs.marginTop) + parseFloat(cs.marginBottom);
-                 if (usedHeight + elHeight > pageInnerHeight && currentPageContent.length > 0) {
-                    flushPage();
-                    usedHeight = newPages.length === 0 ? headerHeight : 0;
-                 }
-                 currentPageContent.push({ mainQuestion: questionObj, subQuestions: [], showMainContent: true });
-                 usedHeight += elHeight;
+            // Case 3: No sub-questions, no main content, no table (e.g. section headers)
+            if (subQuestionEls.length === 0 && !mainContentEl && !tableEl) {
+                const elHeight = outerHeight(questionEl);
+                flushIfOver(elHeight);
+                currentPageContent.push({ mainQuestion: questionObj, subParts: [], showMainContent: true, tableRows: null, optionRows: null });
+                usedHeight += elHeight;
             }
         }
 
@@ -1191,14 +1727,15 @@ case 'fill-in-the-blanks':
             hiddenRenderRef.current.removeChild(tempRenderContainer);
         }
     }
-  };
+      };
 
-    calculatePages();
+      calculatePages();
+    }, 500); // 500ms debounce
 
     return () => {
-        cancelled = true;
+      clearTimeout(debounceTimer);
     };
-}, [paper, settings]);
+  }, [paper, settings]);
   
   if (!paper) {
       return (
@@ -1225,9 +1762,31 @@ case 'fill-in-the-blanks':
         setIsDownloading={setIsDownloading}
         bookletPages={bookletPages}
         setBookletPages={setBookletPages}
+        isPreview={isPreview}
+        setIsPreview={setIsPreview}
       />
       <div className="flex min-h-0 flex-1 overflow-hidden">
         <main className="min-h-0 flex-1 overflow-y-auto contain-layout app-scrollbar bg-slate-200 dark:bg-gray-800 p-4">
+              {isPreview ? (
+                <div className="w-full max-w-full">
+                  <div className="mb-3 flex items-center justify-between">
+                    <h2 className="text-sm font-semibold text-slate-700 dark:text-slate-200">Preview</h2>
+                    <Button variant="outline" size="sm" onClick={() => setIsPreview(false)} className="bg-white dark:bg-slate-800">
+                      Back to Editor
+                    </Button>
+                  </div>
+                  <div className="bg-gray-100 p-3 rounded-lg shadow-lg w-full overflow-hidden">
+                    <PaperPreview
+                      paper={paper}
+                      pages={pages}
+                      settings={settings}
+                      stacked
+                      tableEditCallbacks={tableEditCallbacks}
+                      imageEditCallbacks={imageEditCallbacks}
+                    />
+                  </div>
+                </div>
+              ) : (
               <div className="space-y-4">
                   <div className="bg-white dark:bg-slate-800/50 p-6 space-y-6 shadow-lg rounded-lg">
                       <div className="space-y-4">
@@ -1283,6 +1842,10 @@ case 'fill-in-the-blanks':
                         )}
                         </div>
                       </div>
+
+                      <div className="border-t border-slate-200 dark:border-slate-700 pt-4">
+                        <HeaderBuilder value={paper.headerTemplate} onChange={onHeaderTemplateChange} />
+                      </div>
                   </div>
 
                   {paper.questions.length === 0 ? (
@@ -1298,6 +1861,7 @@ case 'fill-in-the-blanks':
                   </div>
                   )}
               </div>
+              )}
         </main>
 
         {/* Right rail: layout-contained so its internal scroll never grows page scroll.
@@ -1347,6 +1911,37 @@ case 'fill-in-the-blanks':
                 </Link>
               </CardContent>
               )}
+            </Card>
+
+            {/* Add images into the question paper */}
+            <Card className="bg-slate-900 border-slate-700 overflow-hidden">
+              <div className="flex items-center justify-between px-4 py-3">
+                <span className="text-white font-semibold">ছবি যোগ করুন</span>
+                <ImageIcon className="h-4 w-4 text-slate-400" />
+              </div>
+              <CardContent className="px-4 pb-4">
+                <input
+                  ref={imageFileInputRef}
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => {
+                    void handleImageFiles(e.target.files);
+                    e.target.value = '';
+                  }}
+                />
+                <Button
+                  variant="outline"
+                  className="w-full bg-slate-800 border-slate-600 text-white hover:bg-slate-700 hover:text-white"
+                  onClick={() => pickImage(null)}
+                >
+                  <ImageIcon className="mr-2 size-4" /> ছবি আপলোড করুন
+                </Button>
+                <p className="mt-2 text-xs text-slate-400">
+                  PNG/JPG ছবি নিচের তালিকায় যুক্ত হবে। এরপর উপ/নিচ করে ছবিকে প্রশ্নের মাঝে সাজাতে পারবেন এবং মেইন এডিটরে প্রস্থ ও অবস্থান ঠিক করতে পারবেন।
+                </p>
+              </CardContent>
             </Card>
 
             <MathExpressions onInsert={handleInsertExpression} targetLabel={getFocusedFieldLabel()} />

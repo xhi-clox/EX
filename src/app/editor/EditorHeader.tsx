@@ -8,9 +8,8 @@ import { Slider } from '@/components/ui/slider';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Save, Settings, Eye, Download, LogOut, FileText, Trash2, ArrowUp, ArrowDown, Plus, ArrowLeft } from 'lucide-react';
-import type { Paper, PaperSettings, PageContent, BookletSpread, HalfPayload, MainNumberingFormat } from './page';
-import PaperPreview from './PaperPreview';
+import { Save, Settings, Eye, EyeOff, Download, LogOut, FileText, Trash2, ArrowUp, ArrowDown, Plus, ArrowLeft } from 'lucide-react';
+import type { Paper, PaperSettings, PageContent, BookletSpread, HalfPayload, MainNumberingFormat, MarksFormat } from './page';
 import { PaperPage } from './paper-render';
 
 interface EditorHeaderProps {
@@ -25,6 +24,8 @@ interface EditorHeaderProps {
   setIsDownloading: React.Dispatch<React.SetStateAction<boolean>>;
   bookletPages: BookletSpread[];
   setBookletPages: React.Dispatch<React.SetStateAction<BookletSpread[]>>;
+  isPreview: boolean;
+  setIsPreview: React.Dispatch<React.SetStateAction<boolean>>;
 }
 
 export const EditorHeader: React.FC<EditorHeaderProps> = ({ 
@@ -38,7 +39,9 @@ export const EditorHeader: React.FC<EditorHeaderProps> = ({
   isDownloading,
   setIsDownloading,
   bookletPages,
-  setBookletPages
+  setBookletPages,
+  isPreview,
+  setIsPreview
 }) => {
   const [isPdfGenerating, setIsPdfGenerating] = useState(false);
 
@@ -109,16 +112,17 @@ export const EditorHeader: React.FC<EditorHeaderProps> = ({
 
   const SpreadSheet = ({ spread, index }: { spread: BookletSpread; index: number }) => {
     if (!paper) return null;
-    const sheetW = 842;
-    const sheetH = 595;
-    const halfW = sheetW / 2;
-    const scale = Math.min(halfW / settings.width, sheetH / settings.height);
+    const safeW = settings.width > 0 ? settings.width : 560;
+    const safeH = settings.height > 0 ? settings.height : 794;
+    const scale = Math.min(460 / safeW, 300 / safeH, 1);
+    const sheetW = safeW * 2 * scale;
+    const sheetH = safeH * scale;
 
     const renderHalf = (half: HalfPayload | null) => {
-      if (!half) return null;
+      if (!half) return <div className="w-1/2 h-full" />;
       return (
-        <div className="w-1/2 h-full overflow-visible flex items-center justify-center">
-          <div style={{ width: settings.width, height: settings.height, transform: `scale(${scale})`, transformOrigin: 'center' }}>
+        <div className="w-1/2 h-full" style={{ position: 'relative' }}>
+          <div style={{ width: safeW, height: safeH, transform: `scale(${scale})`, transformOrigin: 'top left' }}>
             <PaperPage
               paper={paper}
               pageContent={half.content}
@@ -132,7 +136,7 @@ export const EditorHeader: React.FC<EditorHeaderProps> = ({
     };
 
     return (
-      <div key={index} className="flex-shrink-0 bg-white shadow-lg flex" style={{ width: sheetW, height: sheetH }}>
+      <div key={index} className="flex-shrink-0 bg-white shadow-lg" style={{ width: sheetW, height: sheetH }}>
         {renderHalf(spread.left)}
         {renderHalf(spread.right)}
       </div>
@@ -186,7 +190,7 @@ export const EditorHeader: React.FC<EditorHeaderProps> = ({
               <div className="flex items-center gap-3">
                 <Label className="text-sm shrink-0">Question Numbering:</Label>
                 <Select 
-                  value={paper.mainNumberingFormat ?? 'english-numeric'}
+                  value={paper.mainNumberingFormat ?? 'bangla-numeric'}
                   onValueChange={(value: MainNumberingFormat) => {
                     setPaper(prev => prev ? { ...prev, mainNumberingFormat: value } : prev);
                   }}
@@ -195,9 +199,26 @@ export const EditorHeader: React.FC<EditorHeaderProps> = ({
                     <SelectValue placeholder="Format" />
                   </SelectTrigger>
                   <SelectContent className="bg-slate-800 border-slate-700 text-white">
-                    <SelectItem value="english-numeric">1, 2, 3 (English)</SelectItem>
                     <SelectItem value="bangla-numeric">১, ২, ৩ (Bangla)</SelectItem>
+                    <SelectItem value="english-numeric">1, 2, 3 (English)</SelectItem>
                     <SelectItem value="roman">i, ii, iii (Roman)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex items-center gap-3">
+                <Label className="text-sm shrink-0">Marks:</Label>
+                <Select
+                  value={paper.marksFormat ?? 'bangla-numeric'}
+                  onValueChange={(value: MarksFormat) => {
+                    setPaper(prev => prev ? { ...prev, marksFormat: value } : prev);
+                  }}
+                >
+                  <SelectTrigger className="w-40 h-9 text-xs">
+                    <SelectValue placeholder="Format" />
+                  </SelectTrigger>
+                  <SelectContent className="bg-slate-800 border-slate-700 text-white">
+                    <SelectItem value="bangla-numeric">১, ২, ৩ (Bangla)</SelectItem>
+                    <SelectItem value="english-numeric">1, 2, 3 (English)</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -230,23 +251,43 @@ export const EditorHeader: React.FC<EditorHeaderProps> = ({
             </div>
           </DialogContent>
         </Dialog>
-        <Dialog>
-          <DialogTrigger asChild>
-            <Button variant="outline" className="text-white border-slate-600 hover:bg-slate-700 hover:text-white"><Eye className="mr-2 size-4" /> Preview</Button>
-          </DialogTrigger>
-          <DialogContent className="max-w-4xl h-[90vh] flex flex-col bg-slate-800 border-slate-700 text-white">
-            <DialogHeader>
-              <DialogTitle>Question Paper Preview</DialogTitle>
-            </DialogHeader>
-            <div className="flex-1 overflow-auto app-scrollbar-light bg-gray-100 p-3">
-              <PaperPreview 
-                paper={paper} 
-                pages={pages}
-                settings={settings}
-              />
-            </div>
-          </DialogContent>
-        </Dialog>
+        <Button
+          variant="outline"
+          onClick={() => setIsPreview(v => !v)}
+          className={isPreview ? "bg-white text-slate-900 border-white hover:bg-slate-100" : "text-white border-slate-600 hover:bg-slate-700 hover:text-white"}
+        >
+          {isPreview ? <EyeOff className="mr-2 size-4" /> : <Eye className="mr-2 size-4" />}
+          {isPreview ? "Edit" : "Preview"}
+        </Button>
+        <Select
+          value={paper.mainNumberingFormat ?? 'bangla-numeric'}
+          onValueChange={(value: MainNumberingFormat) => {
+            setPaper(prev => prev ? { ...prev, mainNumberingFormat: value } : prev);
+          }}
+        >
+          <SelectTrigger className="w-36 h-9 text-xs text-white border-slate-600 hover:bg-slate-700 hover:text-white" title="Question numbering">
+            <SelectValue placeholder="Numbering" />
+          </SelectTrigger>
+          <SelectContent className="bg-slate-800 border-slate-700 text-white">
+            <SelectItem value="bangla-numeric">১, ২, ৩ (Bangla)</SelectItem>
+            <SelectItem value="english-numeric">1, 2, 3 (English)</SelectItem>
+            <SelectItem value="roman">i, ii, iii (Roman)</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select
+          value={paper.marksFormat ?? 'bangla-numeric'}
+          onValueChange={(value: MarksFormat) => {
+            setPaper(prev => prev ? { ...prev, marksFormat: value } : prev);
+          }}
+        >
+          <SelectTrigger className="w-32 h-9 text-xs text-white border-slate-600 hover:bg-slate-700 hover:text-white" title="Marks format">
+            <SelectValue placeholder="Marks" />
+          </SelectTrigger>
+          <SelectContent className="bg-slate-800 border-slate-700 text-white">
+            <SelectItem value="bangla-numeric">১, ২, ৩ (Bangla)</SelectItem>
+            <SelectItem value="english-numeric">1, 2, 3 (English)</SelectItem>
+          </SelectContent>
+        </Select>
         <Dialog open={isDownloading} onOpenChange={(open) => { if(!open) { setBookletPages([]); setIsDownloading(false); }}}>
           <DialogTrigger asChild>
             <Button onClick={preparePdfDownload} className="bg-primary hover:bg-primary/90 text-primary-foreground"><Download className="mr-2 size-4" /> Download</Button>
@@ -259,7 +300,7 @@ export const EditorHeader: React.FC<EditorHeaderProps> = ({
               {bookletPages.length > 0 ? (
                 <div className="flex gap-3 rounded-md bg-gray-200 p-3">
                   {bookletPages.map((spread, index) => (
-                    <SpreadSheet spread={spread} index={index} />
+                    <SpreadSheet key={index} spread={spread} index={index} />
                   ))}
                 </div>
               ) : (
