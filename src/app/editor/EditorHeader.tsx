@@ -8,9 +8,10 @@ import { Slider } from '@/components/ui/slider';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Save, Settings, Eye, EyeOff, Download, LogOut, FileText, Trash2, ArrowUp, ArrowDown, Plus, ArrowLeft } from 'lucide-react';
+import { Save, Settings, Eye, EyeOff, Download, FileText, Trash2, ArrowUp, ArrowDown, Plus, ArrowLeft, PanelRightClose, PanelRightOpen } from 'lucide-react';
 import type { Paper, PaperSettings, PageContent, BookletSpread, HalfPayload, MainNumberingFormat, MarksFormat } from './page';
 import { PaperPage } from './paper-render';
+import { buildBookletOrder } from './booklet';
 
 interface EditorHeaderProps {
   paper: Paper | null;
@@ -26,6 +27,8 @@ interface EditorHeaderProps {
   setBookletPages: React.Dispatch<React.SetStateAction<BookletSpread[]>>;
   isPreview: boolean;
   setIsPreview: React.Dispatch<React.SetStateAction<boolean>>;
+  isRightRailHidden: boolean;
+  setIsRightRailHidden: React.Dispatch<React.SetStateAction<boolean>>;
 }
 
 export const EditorHeader: React.FC<EditorHeaderProps> = ({ 
@@ -41,7 +44,9 @@ export const EditorHeader: React.FC<EditorHeaderProps> = ({
   bookletPages,
   setBookletPages,
   isPreview,
-  setIsPreview
+  setIsPreview,
+  isRightRailHidden,
+  setIsRightRailHidden,
 }) => {
   const [isPdfGenerating, setIsPdfGenerating] = useState(false);
 
@@ -82,21 +87,9 @@ export const EditorHeader: React.FC<EditorHeaderProps> = ({
     setIsDownloading(true);
     setBookletPages([]);
 
-    const padded: (PageContent[] | null)[] = [...pages];
-    if (padded.length % 2 !== 0) {
-      padded.push(null);
-    }
-    const n = padded.length;
-    const order: (PageContent[] | null)[] = [];
-    for (let i = 0; i < n / 2; i++) {
-      if (i % 2 === 0) {
-        order.push(padded[n - 1 - i]);
-        order.push(padded[i]);
-      } else {
-        order.push(padded[i]);
-        order.push(padded[n - 1 - i]);
-      }
-    }
+    const order: (PageContent[] | null)[] = buildBookletOrder(pages.length).map((index) =>
+      index === null ? null : pages[index]
+    );
 
     const spreads: BookletSpread[] = [];
     for (let i = 0; i < order.length; i += 2) {
@@ -190,9 +183,9 @@ export const EditorHeader: React.FC<EditorHeaderProps> = ({
               <div className="flex items-center gap-3">
                 <Label className="text-sm shrink-0">Question Numbering:</Label>
                 <Select 
-                  value={paper.mainNumberingFormat ?? 'bangla-numeric'}
-                  onValueChange={(value: MainNumberingFormat) => {
-                    setPaper(prev => prev ? { ...prev, mainNumberingFormat: value } : prev);
+                  value={paper.mainNumberingFormat === undefined ? 'bangla-numeric' : (paper.mainNumberingFormat ?? 'none')}
+                  onValueChange={(value: string) => {
+                    setPaper(prev => prev ? { ...prev, mainNumberingFormat: value === 'none' ? null : (value as MainNumberingFormat) } : prev);
                   }}
                 >
                   <SelectTrigger className="w-40 h-9 text-xs">
@@ -202,6 +195,7 @@ export const EditorHeader: React.FC<EditorHeaderProps> = ({
                     <SelectItem value="bangla-numeric">১, ২, ৩ (Bangla)</SelectItem>
                     <SelectItem value="english-numeric">1, 2, 3 (English)</SelectItem>
                     <SelectItem value="roman">i, ii, iii (Roman)</SelectItem>
+                    <SelectItem value="none">কিছু না দেখাও</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -260,9 +254,9 @@ export const EditorHeader: React.FC<EditorHeaderProps> = ({
           {isPreview ? "Edit" : "Preview"}
         </Button>
         <Select
-          value={paper.mainNumberingFormat ?? 'bangla-numeric'}
-          onValueChange={(value: MainNumberingFormat) => {
-            setPaper(prev => prev ? { ...prev, mainNumberingFormat: value } : prev);
+          value={paper.mainNumberingFormat === undefined ? 'bangla-numeric' : (paper.mainNumberingFormat ?? 'none')}
+          onValueChange={(value: string) => {
+            setPaper(prev => prev ? { ...prev, mainNumberingFormat: value === 'none' ? null : (value as MainNumberingFormat) } : prev);
           }}
         >
           <SelectTrigger className="w-36 h-9 text-xs text-white border-slate-600 hover:bg-slate-700 hover:text-white" title="Question numbering">
@@ -272,6 +266,7 @@ export const EditorHeader: React.FC<EditorHeaderProps> = ({
             <SelectItem value="bangla-numeric">১, ২, ৩ (Bangla)</SelectItem>
             <SelectItem value="english-numeric">1, 2, 3 (English)</SelectItem>
             <SelectItem value="roman">i, ii, iii (Roman)</SelectItem>
+            <SelectItem value="none">কিছু না দেখাও</SelectItem>
           </SelectContent>
         </Select>
         <Select
@@ -322,8 +317,14 @@ export const EditorHeader: React.FC<EditorHeaderProps> = ({
         <Button onClick={handleSave} variant="outline" className="text-white border-slate-600 hover:bg-slate-700 hover:text-white">
           <Save className="mr-2 size-4" /> Save
         </Button>
-        <Button onClick={handleExit} variant="outline" className="text-white border-red-500/50 hover:bg-red-500/10 hover:text-white hover:border-red-500">
-          <LogOut className="mr-2 size-4" /> Exit
+        <Button
+          variant="outline"
+          onClick={() => setIsRightRailHidden(value => !value)}
+          title={isRightRailHidden ? 'Show tools panel' : 'Hide tools panel'}
+          className="text-white border-slate-600 hover:bg-slate-700 hover:text-white"
+        >
+          {isRightRailHidden ? <PanelRightOpen className="mr-2 size-4" /> : <PanelRightClose className="mr-2 size-4" />}
+          {isRightRailHidden ? 'Show tools' : 'Hide tools'}
         </Button>
       </div>
     </header>

@@ -14,11 +14,13 @@ import {
 import { Plus, Trash2, RotateCcw, Bold, Underline, ArrowUp, ArrowDown, ArrowLeft, ArrowRight } from 'lucide-react';
 import {
   HEADER_KINDS,
+  HEADER_ROW_LAYOUTS,
   HEADER_SIZES,
   defaultHeaderTemplate,
   type HeaderCell,
   type HeaderCellKind,
   type HeaderRow,
+  type HeaderRowLayout,
 } from './header-template';
 
 interface HeaderBuilderProps {
@@ -35,9 +37,16 @@ export default function HeaderBuilder({ value, onChange }: HeaderBuilderProps) {
   const addRow = () => {
     onChange([
       ...rows,
-      { id: freshId('hr'), cells: [{ id: freshId('hc'), kind: 'text', text: '', align: 'center', size: 12 }] },
+      {
+        id: freshId('hr'),
+        layout: 'center',
+        cells: [{ id: freshId('hc'), kind: 'text', text: '', align: 'center', size: 12 }],
+      },
     ]);
   };
+
+  const setRowLayout = (ri: number, layout: HeaderRowLayout) =>
+    onChange(rows.map((row, i) => (i === ri ? { ...row, layout } : row)));
 
   const removeRow = (ri: number) => onChange(rows.filter((_, i) => i !== ri));
 
@@ -216,6 +225,18 @@ export default function HeaderBuilder({ value, onChange }: HeaderBuilderProps) {
               <Button variant="ghost" size="sm" className="h-6 text-xs" onClick={() => addCell(ri)}>
                 <Plus className="mr-1 size-3" /> কলাম
               </Button>
+              <Select value={row.layout ?? 'spread'} onValueChange={(v) => setRowLayout(ri, v as HeaderRowLayout)}>
+                <SelectTrigger className="h-6 w-[5.5rem] text-[11px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {HEADER_ROW_LAYOUTS.map((l) => (
+                    <SelectItem key={l.value} value={l.value}>
+                      {l.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
               <Button
                 variant="ghost"
                 size="sm"

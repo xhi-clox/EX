@@ -35,8 +35,8 @@ const recentPapers = [
 export function RecentPapers() {
   return (
     <div>
-        <div className="mb-5">
-            <select className="bg-card border border-border rounded-md py-2 px-3 text-sm text-foreground cursor-pointer focus:outline-none focus:border-primary focus:shadow-[0_0_0_3px_rgba(139,92,246,0.15)]">
+        <div className="mb-4">
+          <select className="cursor-pointer rounded-lg border border-[#dfe9e7] bg-[#f7faf9] px-3 py-2 text-xs font-semibold text-[#587174] outline-none transition-colors focus:border-[#75bdb0] focus:ring-4 focus:ring-[#e1f2ee]">
                 <option>Sort by: Last Updated</option>
                 <option>Sort by: Name</option>
                 <option>Sort by: Status</option>
@@ -44,31 +44,31 @@ export function RecentPapers() {
         </div>
         <Table>
           <TableHeader>
-            <TableRow className="border-b-2 border-border">
-              <TableHead className="text-text-tertiary font-semibold uppercase tracking-wider">Paper Name</TableHead>
-              <TableHead className="text-text-tertiary font-semibold uppercase tracking-wider">Status</TableHead>
-              <TableHead className="text-text-tertiary font-semibold uppercase tracking-wider">Last Updated</TableHead>
+            <TableRow className="border-b border-[#e4ecea] hover:bg-transparent">
+              <TableHead className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#8aa0a0]">Paper Name</TableHead>
+              <TableHead className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#8aa0a0]">Status</TableHead>
+              <TableHead className="text-[10px] font-bold uppercase tracking-[0.14em] text-[#8aa0a0]">Last Updated</TableHead>
               <TableHead><span className="sr-only">Actions</span></TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {recentPapers.map((paper) => (
-              <TableRow key={paper.id} className="border-border hover:bg-[rgba(139,92,246,0.08)] cursor-pointer">
-                <TableCell className="font-semibold text-foreground">{paper.title}</TableCell>
+              <TableRow key={paper.id} className="cursor-pointer border-[#edf2f0] transition-colors hover:bg-[#f7faf9]">
+                <TableCell className="font-semibold text-[#29484d]">{paper.title}</TableCell>
                 <TableCell>
                   {paper.status === 'Completed' ? (
-                    <Badge variant="outline" className="bg-[rgba(16,185,129,0.15)] text-success border-[rgba(16,185,129,0.3)] gap-1.5 capitalize font-bold text-xs py-1 px-3 rounded-full before:content-[''] before:w-1.5 before:h-1.5 before:rounded-full before:bg-success">
+                    <Badge variant="outline" className="gap-1.5 rounded-md border-[#bde2d6] bg-[#eaf7f2] px-2 py-1 text-[10px] font-bold capitalize text-[#327d68] before:size-1.5 before:rounded-full before:bg-[#4ca783] before:content-['']">
                         Completed
                     </Badge>
                   ) : (
-                    <Badge variant="outline" className="bg-[rgba(245,158,11,0.15)] text-warning border-[rgba(245,158,11,0.3)] gap-1.5 capitalize font-bold text-xs py-1 px-3 rounded-full before:content-[''] before:w-1.5 before:h-1.5 before:rounded-full before:bg-warning">
+                    <Badge variant="outline" className="gap-1.5 rounded-md border-[#f1d7aa] bg-[#fff6e7] px-2 py-1 text-[10px] font-bold capitalize text-[#a66b1d] before:size-1.5 before:rounded-full before:bg-[#d9912e] before:content-['']">
                         Draft
                     </Badge>
                   )}
                 </TableCell>
-                <TableCell className="text-text-secondary">{paper.lastUpdated}</TableCell>
+                <TableCell className="text-xs text-[#829697]">{paper.lastUpdated}</TableCell>
                 <TableCell className="text-right">
-                  <button className="text-text-tertiary hover:text-text-primary transition-colors">
+                  <button aria-label={`More options for ${paper.title}`} className="text-[#8aa0a0] transition-colors hover:text-[#0f766e]">
                     <MoreHorizontal className="h-5 w-5" />
                   </button>
                 </TableCell>

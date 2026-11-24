@@ -64,7 +64,7 @@ export default function PaperPreview({ paper, pages, settings, stacked = false, 
         // If only one page, keep centered single page (scale already fits width)
         return (
             <div ref={containerRef} className="w-full">
-                <div className="flex gap-4 overflow-x-auto overflow-y-hidden pb-10 app-scrollbar-light snap-x snap-mandatory justify-start">
+                <div className="flex w-max min-w-full gap-4 overflow-visible pb-10 justify-start">
                     {allPages.map((pageContent, idx) => (
                         <div
                             key={idx}
@@ -95,9 +95,6 @@ export default function PaperPreview({ paper, pages, settings, stacked = false, 
                         </div>
                     ))}
                 </div>
-                {pages.length > 1 && (
-                    <p className="text-center text-xs text-slate-500 pt-1">{pages.length} pages • scroll horizontally to see all • page numbers keep order</p>
-                )}
             </div>
         );
     }

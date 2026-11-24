@@ -145,6 +145,14 @@
   background: transparent;
 }
 
+.scrollbar-hide {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
 @font-face {
   font-family: 'SolaimanLipi';
   src: url('/fonts/SolaimanLipi.ttf') format('truetype');
@@ -153,8 +161,58 @@
   font-display: swap;
 }
 
+@font-face {
+  font-family: 'Noto Serif Bengali';
+  src: url('/fonts/NotoSerifBengali-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Noto Sans Symbols 2 tally glyphs (U+1D377, U+1D378), subset and re-spaced
+   so repeated tallies line up with the crossed group of five. */
+@font-face {
+  font-family: 'TallyMarks';
+  src: url('/fonts/TallyMarks.woff2') format('woff2');
+  font-weight: normal;
+  font-style: normal;
+  font-display: block;
+  unicode-range: U+1D377-1D378;
+}
+
 .paper-page {
-  font-family: 'SolaimanLipi', 'Noto Serif Bengali', Georgia, 'Times New Roman', serif;
+  font-family: 'TallyMarks', 'Times New Roman', 'SolaimanLipi', 'Noto Serif Bengali', serif;
+}
+
+.paper-page .bengali-school-name {
+  font-family: 'Noto Serif Bengali', 'SolaimanLipi', serif;
+}
+
+.paper-page .katex .brahmic_fallback,
+.rich-editor .katex .brahmic_fallback {
+  font-family: 'SolaimanLipi', serif;
+}
+
+.rich-editor {
+  font-family: 'TallyMarks', 'PT Sans', sans-serif;
+}
+
+.tally-marks-font {
+  font-family: 'TallyMarks', 'PT Sans', sans-serif;
+}
+
+/* Bengali glyphs (matra, conjuncts, descenders) break an ink-skipping underline
+   into disconnected dashes, so the line is drawn solid through the glyphs. */
+.paper-page .underline,
+.paper-page u,
+.paper-page [style*='text-decoration: underline'],
+.paper-page [style*='text-decoration:underline'],
+.rich-editor .underline,
+.rich-editor u,
+.rich-editor [style*='text-decoration: underline'],
+.rich-editor [style*='text-decoration:underline'] {
+  text-decoration-skip-ink: none;
+  text-underline-offset: 2px;
 }
 
 /* KaTeX vertical alignment fixes - safe version */

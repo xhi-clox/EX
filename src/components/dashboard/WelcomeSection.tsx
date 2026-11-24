@@ -6,7 +6,7 @@ export function WelcomeSection() {
                   Welcome back, Professor!
               </h1>
               <p className="text-text-secondary text-sm">
-                Here's a summary of your recent activity and quick access to your most used features.
+                Here&apos;s a summary of your recent activity and quick access to your most used features.
               </p>
             </div>
         </section>

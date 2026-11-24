@@ -4,10 +4,19 @@ import type { Paper, Question, NumberingFormat, MainNumberingFormat, MarksFormat
 import EditableTable from './EditableTable';
 import EditableImage from './EditableImage';
 import { imageFilterCss, imageGroupStyle, imageItemStyle, getQuestionImages } from './image-style';
-import { headerFieldText, subjectLabel, gradeLabel } from './header-template';
-
+import { headerFieldText, subjectLabel, gradeLabel, type HeaderRow } from './header-template';
+import {
+  getAlternativeAlign,
+  getAlternativeContent,
+  getAlternativeDocument,
+  normalizeRichTextDocument,
+  plainTextToRichTextDocument,
+  renderPlainTextToHtml,
+  type RichTextDocument,
+} from './text-format';
+import { getAngleDiagramMarkup, type AngleDiagramKind } from './angle-diagram';
 export interface TableEditCallbacks {
-  onCellChange: (questionId: string, row: number, col: number, value: string) => void;
+  onCellChange: (questionId: string, row: number, col: number, value: string, richDocument?: RichTextDocument) => void;
   onAddRow: (questionId: string) => void;
   onRemoveRow: (questionId: string, row: number) => void;
   onAddCol: (questionId: string) => void;
@@ -15,6 +24,7 @@ export interface TableEditCallbacks {
   onResizeRow: (questionId: string, row: number, height: number) => void;
   onColWidths: (questionId: string, widths: number[]) => void;
   onMarginLeftChange: (questionId: string, value: number) => void;
+  onBorderModeChange?: (questionId: string, mode: 'grid' | 'box') => void;
 }
 
 export interface ImageEditCallbacks {
@@ -58,7 +68,13 @@ export type PageContent = {
     showMainContent: boolean;
     tableRows: readonly [number, number] | null;  // built-in (hints/substitution) table rows to render on this page
     optionRows: readonly [number, number] | null; // main-level options grid rows to render on this page
+    textBoxLines?: readonly [number, number] | null; // single text box lines to render on this page
+    formLines?: readonly [number, number] | null;   // boxed form lines to render on this page
+    stemLines?: readonly [number, number] | null;   // question stem lines to render on this page
+    alternativeRange?: readonly [number, number] | null; // alternatives to render on this page
 }
+
+const EMPTY_LINE_RANGE: readonly [number, number] = [0, -1];
 
 const toBanglaDigits = (value: string | number): string =>
   String(value)
@@ -80,6 +96,8 @@ const getNumbering = (format: NumberingFormat | undefined, index: number): strin
     return str.toLowerCase();
   };
 
+  if (format === null) return '';
+
   switch (format) {
     case 'english-numeric':
       return String(index + 1);
@@ -93,9 +111,6 @@ const getNumbering = (format: NumberingFormat | undefined, index: number): strin
   }
 };
 
-const escapeHtml = (text: string): string =>
-  text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-
 const renderMathToHtml = (content: string): string => {
   if (!content) return '';
 
@@ -103,8 +118,9 @@ const renderMathToHtml = (content: string): string => {
   const blockRegex = /\$\$([^$]+)\$\$/g;
   const inlineParenRegex = /\\\(([^]+?)\\\)/g;
   const blockBracketRegex = /\\\[([^]+?)\\\]/g;
+  const diagramRegex = /\\angleDiagram\{(acute|right|obtuse|straight)\}/g;
 
-  const ranges: Array<{ start: number; end: number; content: string; type: 'block' | 'inline' }> = [];
+  const ranges: Array<{ start: number; end: number; content: string; type: 'block' | 'inline' | 'diagram' }> = [];
 
   let match;
   while ((match = blockRegex.exec(content)) !== null) {
@@ -119,33 +135,164 @@ const renderMathToHtml = (content: string): string => {
   while ((match = inlineParenRegex.exec(content)) !== null) {
     ranges.push({ start: match.index, end: match.index + match[0].length, content: match[1], type: 'inline' });
   }
+  while ((match = diagramRegex.exec(content)) !== null) {
+    ranges.push({ start: match.index, end: match.index + match[0].length, content: match[1], type: 'diagram' });
+  }
 
   ranges.sort((a, b) => a.start - b.start);
 
-  if (ranges.length === 0) return escapeHtml(content);
+  if (ranges.length === 0) return renderPlainTextToHtml(content);
 
   let html = '';
   let lastIndex = 0;
   ranges.forEach((r) => {
-    if (r.start > lastIndex) html += escapeHtml(content.substring(lastIndex, r.start));
+    if (r.start < lastIndex) return;
+    if (r.start > lastIndex) html += renderPlainTextToHtml(content.substring(lastIndex, r.start));
+    if (r.type === 'diagram') {
+      html += getAngleDiagramMarkup(r.content as AngleDiagramKind);
+      lastIndex = r.end;
+      return;
+    }
     try {
       html += katex.renderToString(r.content.trim(), {
         displayMode: r.type === 'block',
         throwOnError: false,
       });
     } catch {
-      html += escapeHtml(r.content.trim());
+      html += renderPlainTextToHtml(r.content.trim());
     }
     lastIndex = r.end;
   });
-  if (lastIndex < content.length) html += escapeHtml(content.substring(lastIndex));
+  if (lastIndex < content.length) html += renderPlainTextToHtml(content.substring(lastIndex));
 
   return html;
 };
 
-const RichText = ({ content }: { content: string }) => (
-  <span dangerouslySetInnerHTML={{ __html: renderMathToHtml(content) }} />
-);
+const RichText = ({
+  content,
+  richDocument,
+  align = 'left',
+  prefix,
+  lineRange = null,
+  lineAttributes,
+}: {
+  content: string;
+  richDocument?: RichTextDocument;
+  align?: React.CSSProperties['textAlign'];
+  prefix?: React.ReactNode;
+  lineRange?: readonly [number, number] | null;
+  lineAttributes?: (lineIndex: number) => { 'data-text-box-line'?: number; 'data-stem-line'?: number; style?: React.CSSProperties } | undefined;
+}) => {
+  const document = normalizeRichTextDocument(richDocument, content);
+  const startLine = lineRange ? lineRange[0] : 0;
+  const endLine = lineRange ? lineRange[1] : document.lines.length - 1;
+  const visibleLines = document.lines
+    .map((line, lineIndex) => ({ line, lineIndex }))
+    .filter(({ lineIndex }) => lineIndex >= startLine && lineIndex <= endLine);
+
+  if (!richDocument) {
+    return (
+      <span style={{ whiteSpace: 'pre-wrap' }}>
+        {prefix}
+        <span style={{ whiteSpace: 'pre-wrap' }} dangerouslySetInnerHTML={{ __html: renderMathToHtml(content) }} />
+      </span>
+    );
+  }
+
+  return (
+    <span style={{ display: 'block', whiteSpace: 'pre-wrap' }}>
+      {visibleLines.map(({ line, lineIndex }) => {
+        const extra = lineAttributes?.(lineIndex);
+        return (
+        <span
+          key={lineIndex}
+          {...(extra ?? {})}
+          style={{
+            display: 'block',
+            textAlign: line.align ?? align,
+            whiteSpace: 'pre-wrap',
+            ...(extra?.style ?? {}),
+          }}
+        >
+          {lineIndex === 0 ? prefix : null}
+          {line.runs.map((run, runIndex) => (
+            <span
+              key={runIndex}
+              style={{
+                fontWeight: run.bold ? 700 : undefined,
+                textDecoration: run.underline ? 'underline' : undefined,
+                textDecorationSkipInk: run.underline ? 'none' : undefined,
+                textUnderlineOffset: run.underline ? '2px' : undefined,
+                whiteSpace: 'pre-wrap',
+              }}
+              dangerouslySetInnerHTML={{ __html: renderMathToHtml(run.text) }}
+            />
+          ))}
+          {line.runs.length === 0 ? <br /> : null}
+        </span>
+        );
+      })}
+    </span>
+  );
+};
+
+const FORM_KEYWORD = /(ফরম|নিবন্ধন|আবেদনপত্র|রেজিস্ট্রেশন)/i;
+const FORM_FIELD_LINE = /^\s*(?:[০-৯]{1,2}|[0-9]{1,2})[.)]\s*\S/;
+const INSTRUCTION_LINE = /[।.!?]\s*$/;
+
+type FormBlock = {
+  intro: string;
+  heading: string[];
+  fields: string[];
+  trailing: string[];
+};
+
+// Detects a boxed fill-in form inside a question (a heading block, numbered
+// fields to write on, and optional signature lines) so it can be rendered
+// like the source image instead of a flat paragraph.
+const parseFormBlock = (content: string): FormBlock | null => {
+  if (!content || !FORM_KEYWORD.test(content)) return null;
+
+  const lines = content.replace(/\r\n?/g, '\n').split('\n');
+  const fieldIndexes: number[] = [];
+  lines.forEach((line, index) => {
+    if (FORM_FIELD_LINE.test(line) && line.trim().length <= 60) fieldIndexes.push(index);
+  });
+  if (fieldIndexes.length < 3) return null;
+
+  const firstField = fieldIndexes[0];
+  const lastField = fieldIndexes[fieldIndexes.length - 1];
+  if (firstField === lastField) return null;
+
+  for (let i = firstField; i <= lastField; i += 1) {
+    const line = lines[i].trim();
+    if (!line) continue;
+    if (!fieldIndexes.includes(i)) return null;
+  }
+
+  let keywordIndex = -1;
+  for (let i = firstField - 1; i >= 0; i -= 1) {
+    if (FORM_KEYWORD.test(lines[i])) {
+      keywordIndex = i;
+      break;
+    }
+  }
+  if (keywordIndex === -1) return null;
+
+  let boxStart = keywordIndex;
+  while (boxStart - 1 >= 0) {
+    const previous = lines[boxStart - 1].trim();
+    if (!previous || INSTRUCTION_LINE.test(previous) || FORM_FIELD_LINE.test(previous)) break;
+    boxStart -= 1;
+  }
+
+  return {
+    intro: lines.slice(0, boxStart).join('\n'),
+    heading: lines.slice(boxStart, firstField).filter((line) => line.trim().length > 0),
+    fields: lines.slice(firstField, lastField + 1).filter((line) => line.trim().length > 0),
+    trailing: lines.slice(lastField + 1).filter((line) => line.trim().length > 0),
+  };
+};
 
 const renderTableContent = (question: Question, rowRange: readonly [number, number] | null = null) => {
     const tableData = question.tableData;
@@ -160,8 +307,20 @@ const renderTableContent = (question: Question, rowRange: readonly [number, numb
     const firstRow = rowRange ? rowRange[0] : 0;
     const lastRow = rowRange ? rowRange[1] : tableData.length - 1;
     if (lastRow < firstRow) return null;
+    const isBox = question.tableBorderMode === 'box';
+    const tableStyle: React.CSSProperties = {
+        width: hasExplicit ? `${sumPx}px` : '100%',
+        borderCollapse: 'collapse',
+        tableLayout: 'fixed',
+        ...(isBox ? { border: '1px solid #000' } : {}),
+    };
+    const cellStyle: React.CSSProperties = {
+        ...(isBox ? { border: 'none' } : { border: '1px solid #000' }),
+        padding: '4px 8px',
+        verticalAlign: 'top',
+    };
     return (
-        <table style={{ width: hasExplicit ? `${sumPx}px` : '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}>
+        <table style={tableStyle}>
             <colgroup>
                 {widths.map((w, ci) => (
                     <col key={ci} style={w > 0 ? { width: w } : undefined} />
@@ -173,8 +332,12 @@ const renderTableContent = (question: Question, rowRange: readonly [number, numb
                     return (
                     <tr key={globalRowIndex} data-table-row={globalRowIndex} style={question.tableRowHeights && question.tableRowHeights[globalRowIndex] > 0 ? { height: question.tableRowHeights[globalRowIndex] } : undefined}>
                         {row.map((cell, colIndex) => (
-                            <td key={colIndex} style={{ border: '1px solid #000', padding: '2px 4px', verticalAlign: 'top' }}>
-                                <RichText content={cell ?? ''} />
+                            <td key={colIndex} style={cellStyle}>
+                                <RichText
+                                    content={cell ?? ''}
+                                    richDocument={question.tableDataRich?.[globalRowIndex]?.[colIndex] ?? undefined}
+                                    align="left"
+                                />
                             </td>
                         ))}
                     </tr>
@@ -211,7 +374,15 @@ const renderOptionsGrid = (options: { id: string; text: string }[], rowRange: re
     );
 };
 
-export const renderQuestionContent = (question: Question, questionIndex: number, allQuestions: Question[], showMainContent: boolean, subParts: SubPart[] = [], mainNumberingFormat: MainNumberingFormat = 'bangla-numeric', marksFormat: MarksFormat = 'bangla-numeric', tableEditCallbacks?: TableEditCallbacks | null, imageEditCallbacks?: ImageEditCallbacks | null, tableRows: readonly [number, number] | null = null, optionRows: readonly [number, number] | null = null) => {
+export const renderQuestionContent = (question: Question, questionIndex: number, allQuestions: Question[], showMainContent: boolean, subParts: SubPart[] = [], mainNumberingFormat: MainNumberingFormat = 'bangla-numeric', marksFormat: MarksFormat = 'bangla-numeric', tableEditCallbacks?: TableEditCallbacks | null, imageEditCallbacks?: ImageEditCallbacks | null, tableRows: readonly [number, number] | null = null, optionRows: readonly [number, number] | null = null, textBoxLines?: readonly [number, number] | null, formLines?: readonly [number, number] | null, stemLines?: readonly [number, number] | null, alternativeRange?: readonly [number, number] | null) => {
+    if (question.type === 'or') {
+        return (
+            <div key={question.id} className="text-center font-bold my-2 question-item" data-question-id={question.id}>
+                <div className="question-content">{question.content || 'অথবা'}</div>
+            </div>
+        );
+    }
+
     if (question.type === 'section-header') {
         return (
             <div key={question.id} className="text-center font-bold underline decoration-dotted text-lg my-4" data-question-id={question.id}>
@@ -259,17 +430,128 @@ export const renderQuestionContent = (question: Question, questionIndex: number,
     }
 
     const mainQuestionObj = allQuestions.find(q => q.id === question.id);
-    const isTableQuestion = question.type === 'table' || question.type === 'fill-in-the-blanks';
     const hasTable = Array.isArray(question.tableData) && question.tableData.length > 0;
-    const tableShown = isTableQuestion && question.showHints !== false && hasTable && (tableRows ? tableRows[0] <= tableRows[1] : showMainContent);
+    // A table may belong to any question type (a short/creative/MCQ question can
+    // refer to a printed table). Only the শূন্যস্থান hints table can be hidden.
+    const tableVisible = question.type === 'fill-in-the-blanks' ? question.showHints !== false : true;
+    const tableShown = tableVisible && hasTable && (tableRows ? tableRows[0] <= tableRows[1] : showMainContent);
     const subPartKey = subParts.map(p => `${p.sub.id}:${p.content ? 'c' : ''}${p.optionRows ? p.optionRows.join('-') : 'x'}`).join(',');
+    const hasRichFormatting = question.contentDocument?.lines.some(
+      (line) => Boolean(line.align) || line.runs.some((run) => run.bold || run.underline)
+    );
+    const formBlock = hasRichFormatting ? null : parseFormBlock(question.content);
+    const formBlockLines = formBlock
+        ? [
+            ...formBlock.heading.map((text) => ({ text, className: 'text-center font-semibold' })),
+            ...formBlock.fields.map((text) => ({ text, className: 'mt-1 mb-3' })),
+            ...formBlock.trailing.map((text) => ({ text, className: 'mt-1' })),
+        ]
+        : [];
+    const numberPrefix = (() => {
+        const num = question.numberingLabel ?? getNumbering(mainNumberingFormat, questionIndex - 1);
+        return num ? `${num}. ` : '';
+    })();
+    const marksNode = question.marks !== undefined && question.marks > 0
+        ? <p>{marksFormat === 'bangla-numeric' ? toBanglaDigits(question.marks) : question.marks}</p>
+        : null;
+    const stemDocument = question.contentDocument ?? plainTextToRichTextDocument(question.content);
+    const stemRange = stemLines === null ? EMPTY_LINE_RANGE : stemLines;
+    const stemLineAttributes = (lineIndex: number) => ({ 'data-stem-line': lineIndex });
 
     return (
       <div key={`${question.id}-${showMainContent}-${tableRows ? tableRows.join('-') : 'x'}-${optionRows ? optionRows.join('-') : 'x'}-${subPartKey}`} className="mb-2 question-item" data-question-id={question.id}>
-        {showMainContent && (
-            <div className="flex justify-between font-semibold question-content">
-                <p className="flex-1">{getNumbering(mainNumberingFormat, questionIndex - 1)}. <RichText content={question.content} /></p>
-                {question.type !== 'creative' && question.marks && question.marks > 0 && <p>{marksFormat === 'bangla-numeric' ? toBanglaDigits(question.marks) : question.marks}</p>}
+        {(stemLines !== null || alternativeRange !== null) && (
+            <div className="question-content">
+                {question.type === 'text-box' ? (
+                    <div className="flex justify-between font-semibold" data-question-stem>
+                        <p className="flex-1" style={{ textAlign: question.contentAlign ?? 'left' }}>
+                            <RichText
+                                content={question.content}
+                                richDocument={stemDocument}
+                                align={question.contentAlign ?? 'left'}
+                                prefix={numberPrefix}
+                                lineRange={stemRange}
+                                lineAttributes={stemLineAttributes}
+                            />
+                        </p>
+                        {showMainContent ? marksNode : null}
+                    </div>
+                ) : formBlock ? (
+                    <div className="flex justify-between font-semibold" data-question-stem>
+                        <p className="flex-1" style={{ textAlign: question.contentAlign ?? 'left', whiteSpace: 'pre-wrap' }}>
+                            <RichText
+                                content={formBlock.intro}
+                                richDocument={plainTextToRichTextDocument(formBlock.intro)}
+                                align={question.contentAlign ?? 'left'}
+                                prefix={numberPrefix}
+                                lineRange={stemRange}
+                                lineAttributes={stemLineAttributes}
+                            />
+                        </p>
+                        {showMainContent ? marksNode : null}
+                    </div>
+                ) : (
+                    <div className="flex justify-between font-semibold" data-question-stem>
+                        <p className="flex-1" style={{ textAlign: question.contentAlign ?? 'left' }}>
+                            <RichText
+                                content={question.content}
+                                richDocument={stemDocument}
+                                align={question.contentAlign ?? 'left'}
+                                prefix={numberPrefix}
+                                lineRange={stemRange}
+                                lineAttributes={stemLineAttributes}
+                            />
+                        </p>
+                        {showMainContent ? marksNode : null}
+                    </div>
+                )}
+                {question.alternatives?.map((alternative, altIndex) => {
+                    if (alternativeRange !== undefined && alternativeRange !== null && !(altIndex >= alternativeRange[0] && altIndex <= alternativeRange[1])) {
+                        return null;
+                    }
+                    const alternativeContent = getAlternativeContent(alternative);
+                    if (!alternativeContent.trim()) return null;
+                    const alternativeAlign = getAlternativeAlign(alternative) ?? question.contentAlign ?? 'left';
+                    return (
+                        <p key={`${question.id}-alt-${altIndex}`} data-alternative-row={altIndex} className="mt-1" style={{ textAlign: alternativeAlign, whiteSpace: 'pre-wrap' }}>
+                            <RichText
+                                content={alternativeContent}
+                                richDocument={getAlternativeDocument(alternative)}
+                                align={alternativeAlign}
+                                prefix={<><em>অথবা</em>, </>}
+                            />
+                        </p>
+                    );
+                })}
+            </div>
+        )}
+
+        {question.type === 'text-box' && textBoxLines !== null && (question.textBoxContent || question.textBoxDocument) && (
+            <div className="border border-black px-3 py-2 mt-1" data-text-box-element>
+                <RichText
+                    content={question.textBoxContent ?? ''}
+                    richDocument={question.textBoxDocument ?? plainTextToRichTextDocument(question.textBoxContent ?? '')}
+                    align="left"
+                    lineRange={textBoxLines ?? undefined}
+                    lineAttributes={(lineIndex) => ({ 'data-text-box-line': lineIndex })}
+                />
+            </div>
+        )}
+
+        {formBlock && formLines !== null && (
+            <div className="border border-black px-3 py-2 mt-1" data-form-element>
+                {formBlockLines
+                    .map((entry, lineIndex) => ({ entry, lineIndex }))
+                    .filter(({ lineIndex }) =>
+                        formLines === undefined
+                            ? true
+                            : lineIndex >= formLines[0] && lineIndex <= formLines[1]
+                    )
+                    .map(({ entry, lineIndex }) => (
+                        <p key={`form-line-${lineIndex}`} data-form-line={lineIndex} className={entry.className}>
+                            <RichText content={entry.text} />
+                        </p>
+                    ))}
             </div>
         )}
 
@@ -278,6 +560,8 @@ export const renderQuestionContent = (question: Question, questionIndex: number,
             <EditableTable
               questionId={question.id}
               data={question.tableData as string[][]}
+              richData={question.tableDataRich}
+              borderMode={question.tableBorderMode ?? 'grid'}
               colWidths={question.tableColWidths}
               rowHeights={question.tableRowHeights}
               tableMarginLeft={question.tableMarginLeft}
@@ -300,14 +584,37 @@ export const renderQuestionContent = (question: Question, questionIndex: number,
               if (sqIndex === -1) return null;
               if (!p.content && !(sq.options && sq.options.length > 0)) return null;
 
-               return (
-                 <div key={sq.id} className="subquestion-item pt-1" data-subquestion-id={sq.id}>
-                   {p.content && (
-                     <div className="subquestion-content flex justify-between">
-                       <p className="flex-1">{getNumbering(mainQuestionObj?.numberingFormat, sqIndex)}) <RichText content={sq.content} /></p>
-                       {mainQuestionObj?.type === 'creative' && sq.marks && sq.marks > 0 && <p>{marksFormat === 'bangla-numeric' ? toBanglaDigits(sq.marks) : sq.marks}</p>}
-                     </div>
-                   )}
+                   return (
+                     <div key={sq.id} className="subquestion-item pt-1" data-subquestion-id={sq.id}>
+                    {p.content && (() => {
+                       const num = sq.numberingLabel ?? getNumbering(mainQuestionObj?.numberingFormat, sqIndex);
+                       const prefix = num ? `${num}) ` : '';
+                       return (
+                         <div className="subquestion-content flex">
+                           {sq.type === 'text-box' ? (
+                             <div className="flex-1">
+                               <p style={{ textAlign: sq.contentAlign ?? 'left', whiteSpace: 'pre-wrap' }}>{prefix}</p>
+                               <div className="border border-black px-3 py-2 mt-1">
+                                 <RichText
+                                   content={sq.content}
+                                   richDocument={sq.contentDocument}
+                                   align={sq.contentAlign ?? 'left'}
+                                 />
+                               </div>
+                             </div>
+                           ) : (
+                             <p className="flex-1" style={{ textAlign: sq.contentAlign ?? 'left', whiteSpace: 'pre-wrap' }}>
+                               <RichText
+                                 content={sq.content}
+                                 richDocument={sq.contentDocument}
+                                 align={sq.contentAlign ?? 'left'}
+                                 prefix={prefix}
+                               />
+                             </p>
+                           )}
+                         </div>
+                       );
+                    })()}
                    {sq.options && sq.options.length > 0 && renderOptionsGrid(sq.options, p.optionRows)}
                  </div>
                );
@@ -334,49 +641,125 @@ export const PaperPage = React.forwardRef<HTMLDivElement, { paper: Paper; pageCo
         boxSizing: 'border-box'
     };
 
-    const allQuestionIds = allQuestions.filter(q => q.type !== 'section-header' && q.type !== 'image').map(q => q.id);
+    const allQuestionIds = allQuestions.filter(q => q.type !== 'section-header' && q.type !== 'image' && q.type !== 'or').map(q => q.id);
+    const headerRows = paper.headerTemplate && paper.headerTemplate.length > 0 ? paper.headerTemplate : null;
+    const logoUrl = paper.logoUrl?.trim() ?? '';
+
+    // Leading school/exam rows form the "brand" block. When a logo is set it is
+    // rendered to the left of that block, with the rows stacked to its right.
+    let brandRowCount = 0;
+    if (headerRows) {
+        while (
+            brandRowCount < headerRows.length &&
+            headerRows[brandRowCount].cells.length === 1 &&
+            (headerRows[brandRowCount].cells[0].kind === 'school' ||
+                headerRows[brandRowCount].cells[0].kind === 'examTitle')
+        ) {
+            brandRowCount += 1;
+        }
+    }
+
+    const renderHeaderRow = (row: HeaderRow, rowIndex: number) => {
+        const centered = row.layout === 'center';
+        const isLastRow = !!headerRows && rowIndex === headerRows.length - 1;
+        return (
+            <div
+                key={row.id}
+                style={{
+                    display: 'flex',
+                    alignItems: 'stretch',
+                    justifyContent: centered ? 'center' : 'space-between',
+                    gap: centered ? '1.75rem' : undefined,
+                    marginTop: isLastRow && !!headerRows && headerRows.length > 1 ? '0.35rem' : undefined,
+                }}
+            >
+                {row.cells.map(cell => {
+                    const text = cell.kind === 'text' ? (cell.text ?? '') : headerFieldText(cell.kind, paper);
+                    return (
+                        <div
+                            key={cell.id}
+                            style={{
+                                flex: centered ? '0 0 auto' : '1 1 0%',
+                                textAlign: cell.align ?? 'left',
+                                fontSize: cell.size ? `${cell.size}pt` : undefined,
+                                fontWeight: cell.bold ? 700 : undefined,
+                                fontFamily: cell.kind === 'school' ? "'Noto Serif Bengali', 'SolaimanLipi', serif" : undefined,
+                                textDecoration: cell.underline ? 'underline' : undefined,
+                                textDecorationSkipInk: cell.underline ? 'none' : undefined,
+                                textUnderlineOffset: cell.underline ? '3px' : undefined,
+                            }}
+                        >
+                            {text}
+                        </div>
+                    );
+                })}
+            </div>
+        );
+    };
 
     return (
         <div ref={ref} className="bg-white text-black font-serif max-w-none mx-auto shadow-lg paper-page" style={pageStyle}>
 {isFirstPage && (
-                paper.headerTemplate && paper.headerTemplate.length > 0 ? (
-                    <header className="text-center mb-6 preview-header space-y-2">
-                        {paper.headerTemplate.map(row => (
-                            <div key={row.id} className="flex items-stretch">
-                                {row.cells.map(cell => {
-                                    const text = cell.kind === 'text' ? (cell.text ?? '') : headerFieldText(cell.kind, paper);
-                                    return (
-                                        <div
-                                            key={cell.id}
-                                            className="flex-1"
-                                            style={{
-                                                textAlign: cell.align ?? 'left',
-                                                fontSize: cell.size ? `${cell.size}pt` : undefined,
-                                                fontWeight: cell.bold ? 700 : undefined,
-                                                textDecoration: cell.underline ? 'underline' : undefined,
-                                            }}
-                                        >
-                                            {text}
-                                        </div>
-                                    );
-                                })}
-                            </div>
-                        ))}
+                headerRows ? (
+                    <header
+                        className="text-center mb-6 preview-header"
+                        style={{
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: '0.35rem',
+                            lineHeight: 1.3,
+                        }}
+                    >
+                        {logoUrl && brandRowCount > 0 ? (
+                            <>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                                    <img
+                                        src={logoUrl}
+                                        alt=""
+                                        style={{
+                                            flex: '0 0 auto',
+                                            height: '64px',
+                                            width: 'auto',
+                                            maxWidth: '96px',
+                                            objectFit: 'contain',
+                                        }}
+                                    />
+                                    <div
+                                        style={{
+                                            flex: '1 1 0%',
+                                            display: 'flex',
+                                            flexDirection: 'column',
+                                            gap: '0.35rem',
+                                            lineHeight: 1.3,
+                                        }}
+                                    >
+                                        {headerRows
+                                            .slice(0, brandRowCount)
+                                            .map((row, rowIndex) => renderHeaderRow(row, rowIndex))}
+                                    </div>
+                                </div>
+                                {headerRows
+                                    .slice(brandRowCount)
+                                    .map((row, rowIndex) => renderHeaderRow(row, brandRowCount + rowIndex))}
+                            </>
+                        ) : (
+                            headerRows.map((row, rowIndex) => renderHeaderRow(row, rowIndex))
+                        )}
                     </header>
                 ) : (
                     <>
                         <header className="text-center mb-6 preview-header">
-                            <h1 className="text-xl font-bold">{paper.schoolName}</h1>
+                            <h1 className="text-xl font-bold bengali-school-name">{paper.schoolName}</h1>
                             <h2 className="text-lg">{paper.examTitle}</h2>
                         </header>
 
                         <div className="flex justify-between text-sm mb-6">
-                            <p>বিষয়: {subjectLabel(paper.subject)}</p>
-                            <p>পূর্ণমান: {paper.totalMarks}</p>
+                            <p>শ্রেণি : {gradeLabel(paper.grade)}</p>
+                            <p>বিষয় : {subjectLabel(paper.subject)}</p>
                         </div>
                         <div className="flex justify-between text-sm mb-6">
-                            <p>শ্রেণি: {gradeLabel(paper.grade)}</p>        
-                            <p>সময়: {paper.timeAllowed}</p>
+                            <p>সময় : {paper.timeAllowed}</p>
+                            <p>পূর্ণমান : {paper.totalMarks}</p>
                         </div>
                         {paper.notes && (
                             <div className="text-center text-sm font-semibold mb-6">
@@ -390,13 +773,21 @@ export const PaperPage = React.forwardRef<HTMLDivElement, { paper: Paper; pageCo
             <main>
                 {pageContent.map(content => {
                     let questionNumber = 0;
-                    if (content.mainQuestion.type !== 'section-header') {
-                      const idx = allQuestionIds.indexOf(content.mainQuestion.id);
-                      if (idx !== -1) {
-                          questionNumber = idx + 1;
-                      }
+                    if (content.mainQuestion.type !== 'section-header' && content.mainQuestion.type !== 'or') {
+                        const idx = allQuestionIds.indexOf(content.mainQuestion.id);
+                        if (idx !== -1) {
+                            questionNumber = idx + 1;
+                        }
                     }
-                    return renderQuestionContent(content.mainQuestion, questionNumber, allQuestions, content.showMainContent, content.subParts || [], paper.mainNumberingFormat, paper.marksFormat, tableEditCallbacks, imageEditCallbacks, content.tableRows ?? null, content.optionRows ?? null);
+                    const liveQuestion =
+                        allQuestions.find((question) => question.id === content.mainQuestion.id) ??
+                        content.mainQuestion;
+                    const liveSubParts = (content.subParts || []).map((part) => {
+                        const liveSub =
+                            liveQuestion.subQuestions?.find((sub) => sub.id === part.sub.id) ?? part.sub;
+                        return { ...part, sub: liveSub };
+                    });
+                    return renderQuestionContent(liveQuestion, questionNumber, allQuestions, content.showMainContent, liveSubParts, paper.mainNumberingFormat, paper.marksFormat, tableEditCallbacks, imageEditCallbacks, content.tableRows ?? null, content.optionRows ?? null, content.textBoxLines, content.formLines, content.stemLines, content.alternativeRange);
                 })}
             </main>
         </div>

@@ -1,66 +1,53 @@
+'use client';
+
+import { useState } from 'react';
 import { QuickActions } from '@/components/dashboard/QuickActions';
-import { RecentPapers } from '@/components/dashboard/RecentPapers';
-import { Statistics } from '@/components/dashboard/Statistics';
 import { RecentActivity } from '@/components/dashboard/RecentActivity';
 import { Projects } from '@/components/dashboard/Projects';
-import { FileText, Clock, BarChart2, History, Folder, Bolt } from 'lucide-react';
+import { History, Folder, Bolt } from 'lucide-react';
 import { AppHeader } from '@/components/layout/AppHeader';
 import { AppSidebar } from '@/components/layout/AppSidebar';
 
 export default function Home() {
+  const [sidebarHidden, setSidebarHidden] = useState(false);
+
   return (
-    <div className="flex min-h-screen">
-      <AppSidebar />
-      <main className="flex-1 md:ml-[260px] p-6">
+    <div className="flex min-h-screen bg-[#f3f7f6] text-[#17343a]">
+      <AppSidebar onCollapseChange={setSidebarHidden} />
+      <main className={`flex-1 px-5 py-5 transition-[margin] duration-200 lg:px-8 lg:py-7 ${sidebarHidden ? 'md:ml-0' : 'md:ml-[260px]'}`}>
         <AppHeader />
-        <div className="grid grid-cols-12 gap-6 mt-7">
-          <div className="col-span-12 lg:col-span-4">
-            <section className="bg-surface backdrop-blur-2xl rounded-lg p-6 shadow-[0_8px_32px_rgba(0,0,0,0.5)] border border-border h-full">
-              <h2 className="text-xl font-bold mb-5 flex items-center gap-3">
-                <Bolt className="text-primary" /> Quick Actions
+        <div className="grid grid-cols-12 items-stretch gap-5 mt-6">
+          <div className="col-span-12 flex flex-col gap-5 lg:col-span-4">
+            <section className="rounded-2xl border border-[#d7e5e1] bg-white p-6 shadow-[0_10px_30px_rgba(23,52,58,0.05)]">
+              <p className="mb-2 text-[11px] font-bold uppercase tracking-[0.18em] text-[#6b8385]">Create</p>
+              <h2 className="mb-6 flex items-center gap-2.5 text-xl font-bold tracking-[-0.02em] text-[#17343a]">
+                <span className="flex size-8 items-center justify-center rounded-lg bg-[#e3f2ee] text-[#0f766e]"><Bolt className="size-4" /></span>
+                Quick actions
               </h2>
               <QuickActions />
             </section>
-          </div>
-          <div className="col-span-12 lg:col-span-8">
-              <section className="bg-surface backdrop_blur-2xl rounded-lg p-6 shadow-[0_8px_32px_rgba(0,0,0,0.5)] border border-border h-full">
-                  <div className="flex items-center justify-between mb-5">
-                      <h2 className="text-xl font-bold flex items-center gap-3">
-                          <Folder className="text-primary" /> Projects
-                      </h2>
-                      <a href="#" className="text-primary text-sm font-semibold hover:text-primary-light transition-colors">View All</a>
-                  </div>
-                  <Projects />
-            </section>
-          </div>
-          <div className="col-span-12 lg:col-span-8">
-              <section className="bg-surface backdrop-blur-2xl rounded-lg p-6 shadow-[0_8px_32px_rgba(0,0,0,0.5)] border border-border h-full">
-                <div className="flex items-center justify-between mb-5">
-                    <h2 className="text-xl font-bold flex items-center gap-3">
-                        <FileText className="text-primary" /> Recent Papers
+
+            <section className="min-h-0 flex-1 rounded-2xl border border-[#d7e5e1] bg-white p-6 shadow-[0_10px_30px_rgba(23,52,58,0.05)]">
+                <div className="mb-6 flex items-center justify-between">
+                    <h2 className="flex items-center gap-2.5 text-xl font-bold tracking-[-0.02em] text-[#17343a]">
+                        <span className="flex size-8 items-center justify-center rounded-lg bg-[#fbe8e4] text-[#c65d4d]"><History className="size-4" /></span>
+                        Recent activity
                     </h2>
-                    <a href="#" className="text-primary text-sm font-semibold hover:text-primary-light transition-colors">View All</a>
-                </div>
-                <RecentPapers />
-            </section>
-          </div>
-          <div className="col-span-12 lg:col-span-4">
-            <section className="bg-surface backdrop-blur-2xl rounded-lg p-6 shadow-[0_8px_32px_rgba(0,0,0,0.5)] border border-border h-full">
-                <h2 className="text-xl font-bold mb-5 flex items-center gap-3">
-                    <BarChart2 className="text-primary" /> Statistics
-                </h2>
-                <Statistics />
-            </section>
-          </div>
-          <div className="col-span-12">
-              <section className="bg-surface backdrop-blur-2xl rounded-lg p-6 shadow-[0_8px_32px_rgba(0,0,0,0.5)] border border-border h-full">
-                <div className="flex items-center justify-between mb-5">
-                    <h2 className="text-xl font-bold flex items-center gap-3">
-                        <History className="text-primary" /> Recent Activity
-                    </h2>
-                    <a href="#" className="text-primary text-sm font-semibold hover:text-primary-light transition-colors">View All</a>
+                    <a href="#" className="text-sm font-bold text-[#0f766e] transition-colors hover:text-[#115e59]">View all</a>
                 </div>
                 <RecentActivity />
+            </section>
+          </div>
+          <div className="col-span-12 lg:col-span-8">
+                <section className="min-h-[calc(100vh-180px)] h-full rounded-2xl border border-[#d7e5e1] bg-white p-6 shadow-[0_10px_30px_rgba(23,52,58,0.05)]">
+                  <div className="mb-6 flex items-center justify-between">
+                      <h2 className="flex items-center gap-2.5 text-xl font-bold tracking-[-0.02em] text-[#17343a]">
+                          <span className="flex size-8 items-center justify-center rounded-lg bg-[#fff1dc] text-[#c77b22]"><Folder className="size-4" /></span>
+                      Papers
+                      </h2>
+                      <a href="#" className="text-sm font-bold text-[#0f766e] transition-colors hover:text-[#115e59]">View all</a>
+                  </div>
+                  <Projects />
             </section>
           </div>
         </div>

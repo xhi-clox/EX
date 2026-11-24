@@ -23,15 +23,15 @@ const activities = [
 
 export function RecentActivity() {
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-1">
       {activities.map((activity, index) => (
-          <div key={index} className="flex gap-3.5 pb-4 border-b border-border last:border-b-0 last:pb-0 transition-all hover:pl-2">
-              <div className="w-10 h-10 rounded-lg flex items-center justify-center bg-gradient-to-br from-[rgba(139,92,246,0.2)] to-[rgba(236,72,153,0.2)] text-primary-light border border-[rgba(139,92,246,0.3)] flex-shrink-0 transition-transform group-hover:scale-110">
+          <div key={index} className="flex gap-3 border-b border-[#dfeae7] py-3.5 transition-colors last:border-b-0 hover:bg-[#f5faf8]">
+              <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-[#fbe8e4] text-[#c65d4d]">
                   <activity.Icon className="size-5"/>
               </div>
               <div className='flex-1'>
-                  <p className="text-sm font-medium mb-1.5 text-text-primary">{activity.description}</p>
-                  <p className="text-xs text-text-tertiary flex items-center gap-1.5">
+                  <p className="mb-1 text-xs font-semibold leading-relaxed text-[#294b50]">{activity.description}</p>
+                  <p className="flex items-center gap-1.5 text-[11px] font-medium text-[#5d7778]">
                       <Clock className="size-3" /> {activity.time}
                   </p>
               </div>

@@ -7,6 +7,7 @@ import { useState } from 'react';
 import { ChevronDown, ChevronUp, Send, AlertCircle, Sigma, Delete, MousePointerClick, Lightbulb } from 'lucide-react';
 import 'katex/dist/katex.min.css';
 import { InlineMath } from 'react-katex';
+import AngleDiagram, { angleDiagramKinds, angleDiagramLabels } from './angle-diagram';
 
 interface MathExpressionsProps {
   onInsert: (expression: string) => void;
@@ -17,6 +18,7 @@ interface ExpressionItem {
     label: string;
     value: string;
     latex?: string;
+    kind?: 'angle-diagram';
 }
 
 interface ExpressionCategory {
@@ -111,9 +113,25 @@ const expressionCategories: ExpressionCategory[] = [
         { label: "×", value: " \\times ", latex: " \\times " },
         { label: "÷", value: " \\div ", latex: " \\div " },
         { label: "=", value: " = ", latex: " = " },
+        { label: "±", value: " \\pm ", latex: " \\pm " },
+        { label: "·", value: " \\cdot ", latex: " \\cdot " },
+        { label: "%", value: " \\% ", latex: " \\% " },
+        { label: "≠", value: " \\neq ", latex: " \\neq " },
+        { label: "<", value: " < ", latex: " < " },
+        { label: ">", value: " > ", latex: " > " },
+        { label: "≤", value: " \\leq ", latex: " \\leq " },
+        { label: "≥", value: " \\geq ", latex: " \\geq " },
         { label: "(", value: "(", latex: "(" },
         { label: ")", value: ")", latex: ")" },
       ]
+    },
+    {
+      category: "Geometry Diagrams",
+      expressions: angleDiagramKinds.map((kind) => ({
+        label: angleDiagramLabels[kind],
+        value: `\\angleDiagram{${kind}}`,
+        kind: 'angle-diagram' as const,
+      })),
     },
     {
       category: "Fractions & Division",
@@ -233,6 +251,11 @@ export default function MathExpressions({ onInsert, targetLabel }: MathExpressio
     try {
       if (!latex.trim()) {
         return <span className="text-muted-foreground">Preview here...</span>;
+      }
+
+      const diagramMatch = /^\\angleDiagram\{(acute|right|obtuse|straight)\}$/.exec(latex.trim());
+      if (diagramMatch) {
+        return <AngleDiagram kind={diagramMatch[1] as (typeof angleDiagramKinds)[number]} />;
       }
       
       // Check if it's plain text that doesn't need LaTeX rendering
@@ -360,11 +383,17 @@ export default function MathExpressions({ onInsert, targetLabel }: MathExpressio
                         variant="outline"
                         size="sm"
                         className="h-auto min-h-[3.25rem] flex-col gap-1 px-1 py-1.5 bg-slate-800 border-slate-700 hover:bg-slate-700 hover:border-slate-500 text-white"
-                        onClick={() => handleSymbolClick(expr.value)}
+                        onClick={() => {
+                          if (expr.kind === 'angle-diagram') {
+                            onInsert(expr.value);
+                          } else {
+                            handleSymbolClick(expr.value);
+                          }
+                        }}
                         title={`Add ${expr.label}`}
                       >
                         <div className="text-base leading-none max-w-full overflow-hidden">
-                          {renderLatexPreview(expr.latex || expr.value)}
+                          {expr.kind === 'angle-diagram' ? renderLatexPreview(expr.value) : renderLatexPreview(expr.latex || expr.value)}
                         </div>
                         <div className="text-[10px] leading-none text-slate-400 truncate max-w-full">
                           {expr.label}

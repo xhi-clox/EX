@@ -2,10 +2,12 @@ import { NextRequest, NextResponse } from 'next/server';
 import * as React from 'react';
 import fs from 'node:fs';
 import path from 'node:path';
-import { chromium } from 'playwright';
-import type { Browser } from 'playwright';
+import type { Browser } from 'playwright-core';
 import { PaperPage } from '../../editor/paper-render';
 import type { Paper, PaperSettings, PageContent } from '../../editor/page';
+
+export const runtime = 'nodejs';
+export const maxDuration = 60;
 
 export interface HalfPayload {
   content: PageContent[];
@@ -54,6 +56,39 @@ const solaimanLipiCss = (() => {
   }
 })();
 
+const notoSerifBengaliCss = (() => {
+  try {
+    const fontPath = path.join(process.cwd(), 'public', 'fonts', 'NotoSerifBengali-Regular.ttf');
+    const fontData = fs.readFileSync(fontPath).toString('base64');
+    return `
+@font-face {
+  font-family: 'Noto Serif Bengali';
+  src: url(data:font/truetype;base64,${fontData}) format('truetype');
+  font-weight: 400;
+  font-style: normal;
+}`;
+  } catch {
+    return '';
+  }
+})();
+
+const tallyMarksCss = (() => {
+  try {
+    const fontPath = path.join(process.cwd(), 'public', 'fonts', 'TallyMarks.woff2');
+    const fontData = fs.readFileSync(fontPath).toString('base64');
+    return `
+@font-face {
+  font-family: 'TallyMarks';
+  src: url(data:font/woff2;base64,${fontData}) format('woff2');
+  font-weight: normal;
+  font-style: normal;
+  unicode-range: U+1D377-1D378;
+}`;
+  } catch {
+    return '';
+  }
+})();
+
 // The artboard (sheet) is fully dynamic: it always matches the paper settings
 // page size, so content is rendered 1:1 at the assigned size. A sheet holds two
 // halves side by side (booklet spread), each exactly settings.width x settings.height.
@@ -87,7 +122,9 @@ textarea, input { font-family: inherit; font-size: inherit; }
 
 .bg-white { background-color: #fff; }
 .text-black { color: #000; }
-.font-serif { font-family: 'SolaimanLipi', 'Noto Serif Bengali', Georgia, 'Times New Roman', serif; }
+.font-serif { font-family: 'TallyMarks', 'Times New Roman', 'SolaimanLipi', 'Noto Serif Bengali', serif; }
+.bengali-school-name { font-family: 'Noto Serif Bengali', 'SolaimanLipi', serif; }
+.katex .brahmic_fallback { font-family: 'SolaimanLipi', serif; }
 .text-center { text-align: center; }
 .font-bold { font-weight: 700; }
 .font-semibold { font-weight: 600; }
@@ -114,10 +151,31 @@ textarea, input { font-family: inherit; font-size: inherit; }
 .gap-y-1 { row-gap: 0.25rem; }
 ` as const;
 
+async function launchBrowser(): Promise<Browser> {
+  const isServerless = Boolean(
+    process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.LAMBDA_TASK_ROOT
+  );
+
+  if (!isServerless) {
+    const { chromium } = await import('playwright');
+    return chromium.launch({ headless: true });
+  }
+
+  const [{ default: serverlessChromium }, { chromium }] = await Promise.all([
+    import('@sparticuz/chromium'),
+    import('playwright-core'),
+  ]);
+  const executablePath = await serverlessChromium.executablePath();
+  return chromium.launch({
+    args: serverlessChromium.args,
+    executablePath,
+  });
+}
+
 async function getBrowser(): Promise<Browser> {
   const g = globalThis as any;
   if (!g.__pdfBrowserPromise) {
-    g.__pdfBrowserPromise = chromium.launch({ headless: true }).catch((err) => {
+    g.__pdfBrowserPromise = launchBrowser().catch((err) => {
       g.__pdfBrowserPromise = null;
       throw err;
     });
@@ -179,6 +237,8 @@ async function buildHtml(req: GenerateRequest): Promise<string> {
     <meta charset="utf-8" />
     <style>${katexCss}</style>
     <style>${solaimanLipiCss}</style>
+    <style>${notoSerifBengaliCss}</style>
+    <style>${tallyMarksCss}</style>
     <style>${baseCss(sheetW, sheetH, halfW)}</style>
   </head>
   <body>${sheets.join('\n')}</body>

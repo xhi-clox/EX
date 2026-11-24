@@ -6,51 +6,59 @@ import { MoreVertical, Clock } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 
 export function Projects() {
-  const { projects } = useProjects();
+  const { projects, isLoaded } = useProjects();
   const router = useRouter();
 
   const handleProjectClick = (projectId: string) => {
     router.push(`/editor?project=${projectId}`);
   };
 
+  if (!isLoaded) {
+    return (
+      <div className="rounded-xl border border-dashed border-[#cdddda] bg-[#f8fbfa] p-8 text-center">
+        <p className="text-[#4c686b]">Loading papers...</p>
+      </div>
+    );
+  }
+
   if (projects.length === 0) {
     return (
-      <div className="text-center p-8 border-2 border-dashed border-border rounded-lg">
-        <p className="text-muted-foreground">You don't have any projects yet.</p>
-        <p className="text-sm text-muted-foreground">
-          Use the "Quick Actions" to create a new one.
+      <div className="rounded-xl border border-dashed border-[#cdddda] bg-[#f8fbfa] p-8 text-center">
+        <p className="text-[#4c686b]">You don&apos;t have any projects yet.</p>
+        <p className="text-sm text-[#829697]">
+          Use the &quot;Quick Actions&quot; to create a new one.
         </p>
       </div>
     );
   }
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+    <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2">
       {projects.map((project) => (
         <div
           key={project.id}
-          className="bg-card rounded-lg p-5 cursor-pointer transition-all duration-300 border border-border border-l-4 border-l-primary hover:border-l-accent hover:-translate-y-1 hover:shadow-[0_12px_32px_rgba(0,0,0,0.5)]"
+          className="cursor-pointer rounded-xl border border-[#dce9e5] border-l-4 border-l-[#75bdb0] bg-[#f7fbf9] p-3.5 transition-all duration-200 hover:-translate-y-0.5 hover:border-[#a9d6ce] hover:border-l-[#0f766e] hover:bg-white hover:shadow-[0_8px_20px_rgba(23,52,58,0.07)]"
           onClick={() => handleProjectClick(project.id)}
         >
-          <div className="flex justify-between items-start mb-3">
-            <h3 className="font-bold text-base text-foreground truncate">{project.name}</h3>
-            <button className="text-text-tertiary hover:text-text-primary transition-colors">
-                <MoreVertical className="size-5" />
+          <div className="mb-2.5 flex items-start justify-between">
+            <h3 className="truncate text-[13px] font-bold text-[#102f35]">{project.name}</h3>
+            <button aria-label={`More options for ${project.name}`} className="text-[#8aa0a0] transition-colors hover:text-[#0f766e]">
+                <MoreVertical className="size-[18px]" />
             </button>
           </div>
-          <div className="flex flex-wrap gap-2 mb-4">
-            <span className="bg-[rgba(139,92,246,0.15)] text-primary-light py-1.5 px-3 rounded-full text-xs font-semibold border border-[rgba(139,92,246,0.3)]">{project.subject}</span>
-            <span className="bg-[rgba(139,92,246,0.15)] text-primary-light py-1.5 px-3 rounded-full text-xs font-semibold border border-[rgba(139,92,246,0.3)]">Class {project.class}</span>
+          <div className="mb-3 flex flex-wrap gap-1.5">
+            <span className="rounded-md bg-[#e3f2ee] px-2 py-1 text-[11px] font-bold text-[#397d73]">{project.subject}</span>
+            <span className="rounded-md bg-[#edf1f0] px-2 py-1 text-[11px] font-bold text-[#6b8081]">Class {project.class}</span>
           </div>
 
-          <div className="border-t border-border pt-3 flex justify-between items-center">
-             <div className="flex items-center text-text-tertiary text-sm">
-                <Clock className="size-4 mr-1.5 text-primary" />
+           <div className="flex items-center justify-between border-t border-[#e4ecea] pt-3">
+             <div className="flex items-center text-[11px] font-medium text-[#5d7778]">
+               <Clock className="mr-1.5 size-3.5 text-[#4a9b8d]" />
                 <span>Updated {formatDistanceToNow(new Date(project.lastUpdated), { addSuffix: true })}</span>
              </div>
-             <div className='flex items-center gap-2 text-xs text-text-tertiary'>
-                <div className='w-16 h-1 bg-surface rounded-full overflow-hidden'>
-                    <div className='h-full bg-gradient-to-r from-primary to-accent' style={{width: '75%'}}></div>
+             <div className='flex items-center gap-2 text-[11px] font-bold text-[#5d7778]'>
+              <div className='h-1.5 w-14 overflow-hidden rounded-full bg-[#e1ebe8]'>
+                <div className='h-full rounded-full bg-[#75bdb0]' style={{width: '75%'}}></div>
                 </div>
                 75%
              </div>

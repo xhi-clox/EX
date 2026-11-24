@@ -1,0 +1,542 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Bangla Exam Maker question import format",
+  "description": "Return one JSON object with a questions array. Use exact question type names from the enum. Keep printed text and marks faithful to the source; omit marks when none are printed.",
+  "type": "object",
+  "properties": {
+    "title": {
+      "type": "string",
+      "description": "Optional paper title. It is not imported as a question."
+    },
+    "subject": {
+      "type": "string",
+      "description": "Optional subject."
+    },
+    "grade": {
+      "type": "string",
+      "description": "Optional class or grade."
+    },
+    "questions": {
+      "type": "array",
+      "description": "Questions in printed order. Each id must be unique across the whole paper.",
+      "items": {
+        "$ref": "#/$defs/question"
+      }
+    }
+  },
+  "required": [
+    "questions"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "richTextDocument": {
+      "type": "object",
+      "properties": {
+        "lines": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "align": {
+                "enum": [
+                  "left",
+                  "center",
+                  "right",
+                  "justify"
+                ]
+              },
+              "runs": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "text": {
+                      "type": "string"
+                    },
+                    "bold": {
+                      "type": "boolean"
+                    },
+                    "underline": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "text"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "runs"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "lines"
+      ],
+      "additionalProperties": false
+    },
+    "option": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique option id, for example q1_opt1."
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "text"
+      ],
+      "additionalProperties": false
+    },
+    "alternative": {
+      "oneOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "content": {
+              "type": "string"
+            },
+            "contentAlign": {
+              "enum": [
+                "left",
+                "center",
+                "right",
+                "justify"
+              ]
+            },
+            "contentDocument": {
+              "$ref": "#/$defs/richTextDocument"
+            }
+          },
+          "required": [
+            "content"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "question": {
+      "type": "object",
+      "description": "A main question or nested sub-question. Use recursive subQuestions for grouped and creative questions.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique id such as q1 or q1a."
+        },
+        "numberingLabel": {
+          "type": "string",
+          "description": "Exact printed number/letter without punctuation; do not repeat it in content."
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "passage",
+            "fill-in-the-blanks",
+            "short",
+            "mcq",
+            "essay",
+            "table",
+            "creative",
+            "section-header",
+            "text-box",
+            "image",
+            "or"
+          ]
+        },
+        "content": {
+          "type": "string",
+          "description": "Question text, stimulus, instruction, passage, section heading, or empty string for image-only content. Use $...$ for inline math."
+        },
+        "contentAlign": {
+          "enum": [
+            "left",
+            "center",
+            "right",
+            "justify"
+          ]
+        },
+        "contentDocument": {
+          "$ref": "#/$defs/richTextDocument"
+        },
+        "marks": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Printed marks for this item only. Omit if the image has no marks; do not guess."
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/option"
+          }
+        },
+        "subQuestions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/question"
+          }
+        },
+        "alternatives": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/alternative"
+          }
+        },
+        "numberingFormat": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "english-numeric",
+            "bangla-alpha",
+            "bangla-numeric",
+            "roman",
+            null
+          ]
+        },
+        "textBoxContent": {
+          "description": "Text inside a single undivided box; one string per visible line or newline-separated string.",
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
+        },
+        "textBoxAligns": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "left",
+              "center",
+              "right",
+              "justify"
+            ]
+          }
+        },
+        "textBoxDocument": {
+          "$ref": "#/$defs/richTextDocument"
+        },
+        "tableData": {
+          "type": "array",
+          "description": "Table rows, each a row of cell strings.",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "tableDataRich": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/richTextDocument"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        "tableBorderMode": {
+          "enum": [
+            "grid",
+            "box"
+          ]
+        },
+        "tableColWidths": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        },
+        "tableRowHeights": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        },
+        "tableMarginLeft": {
+          "type": "number"
+        },
+        "rows": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cols": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "showHints": {
+          "type": "boolean"
+        },
+        "imageData": {
+          "type": "string",
+          "description": "Optional image data URL."
+        },
+        "images": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "data": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "data"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "imageWidth": {
+          "type": "number",
+          "minimum": 5,
+          "maximum": 100
+        },
+        "imageAlign": {
+          "enum": [
+            "left",
+            "center",
+            "right"
+          ]
+        },
+        "imageGrayscale": {
+          "type": "number"
+        },
+        "imageBrightness": {
+          "type": "number"
+        },
+        "imageContrast": {
+          "type": "number"
+        },
+        "imageLight": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "content"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "mcq"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "options": {
+                "description": "Visible answer choices. Use an empty array if the image has no options."
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "creative"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "subQuestions": {
+                "description": "The related ক, খ, গ, ঘ parts, in printed order."
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "table"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "required": [
+              "tableData"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "text-box"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "required": [
+              "textBoxContent"
+            ]
+          }
+        }
+      ],
+      "additionalProperties": true
+    }
+  },
+  "examples": [
+    {
+      "title": "Question paper example",
+      "questions": [
+        {
+          "id": "q1",
+          "type": "section-header",
+          "content": "ক-বিভাগ"
+        },
+        {
+          "id": "q2",
+          "numberingLabel": "১",
+          "type": "mcq",
+          "content": "সঠিক উত্তরটি বেছে নাও:",
+          "subQuestions": [
+            {
+              "id": "q2a",
+              "numberingLabel": "১",
+              "type": "mcq",
+              "content": "২ + ৩ = কত?",
+              "options": [
+                {
+                  "id": "q2a_opt1",
+                  "text": "৪"
+                },
+                {
+                  "id": "q2a_opt2",
+                  "text": "৫"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "q3",
+          "numberingLabel": "২",
+          "type": "fill-in-the-blanks",
+          "content": "শূন্যস্থান পূরণ কর: ১ + ১ = ____"
+        },
+        {
+          "id": "q4",
+          "numberingLabel": "৩",
+          "type": "creative",
+          "content": "রহিমের কাছে ৫টি বই আছে।",
+          "numberingFormat": "bangla-alpha",
+          "subQuestions": [
+            {
+              "id": "q4a",
+              "numberingLabel": "ক",
+              "type": "short",
+              "content": "তার কাছে কয়টি বই আছে?"
+            }
+          ]
+        },
+        {
+          "id": "q5",
+          "numberingLabel": "৪",
+          "type": "short",
+          "content": "এক বছরে কয় মাস?"
+        },
+        {
+          "id": "q6",
+          "numberingLabel": "৫",
+          "type": "essay",
+          "content": "আমার বিদ্যালয় সম্পর্কে লেখ।"
+        },
+        {
+          "id": "q7",
+          "numberingLabel": "৬",
+          "type": "passage",
+          "content": "একটি পাঠ্যাংশ।"
+        },
+        {
+          "id": "q8",
+          "numberingLabel": "৭",
+          "type": "table",
+          "content": "নিচের সারণিটি দেখো:",
+          "tableData": [
+            [
+              "নাম",
+              "সংখ্যা"
+            ],
+            [
+              "আম",
+              "৫"
+            ]
+          ],
+          "rows": 2,
+          "cols": 2
+        },
+        {
+          "id": "q9",
+          "numberingLabel": "৮",
+          "type": "text-box",
+          "content": "ঘরের মধ্যে লিখ:",
+          "textBoxContent": [
+            "শিক্ষার্থীর নাম:",
+            "শ্রেণি:"
+          ],
+          "textBoxAligns": [
+            "left",
+            "left"
+          ]
+        },
+        {
+          "id": "q10",
+          "type": "image",
+          "content": "",
+          "imageData": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/6x8AAAAASUVORK5CYII="
+        },
+        {
+          "id": "q11",
+          "type": "or",
+          "content": "অথবা"
+        }
+      ]
+    }
+  ]
+}
