@@ -152,11 +152,7 @@ textarea, input { font-family: inherit; font-size: inherit; }
 ` as const;
 
 async function launchBrowser(): Promise<Browser> {
-  const isServerless = Boolean(
-    process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.LAMBDA_TASK_ROOT
-  );
-
-  if (!isServerless) {
+  if (process.platform !== 'linux') {
     const { chromium } = await import('playwright');
     return chromium.launch({ headless: true });
   }
