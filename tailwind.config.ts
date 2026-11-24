@@ -17,8 +17,8 @@ export default {
     },
     extend: {
       fontFamily: {
-        sans: ['"PT Sans"', 'sans-serif'],
-        headline: ['Poppins', 'sans-serif'],
+        sans: ['"SolaimanLipi Bengali"', '"PT Sans"', 'sans-serif'],
+        headline: ['"SolaimanLipi Bengali"', 'Poppins', 'sans-serif'],
         code: ['monospace'],
       },
       colors: {

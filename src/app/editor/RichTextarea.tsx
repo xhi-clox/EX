@@ -3,6 +3,7 @@
 import * as React from 'react';
 import { AlignCenter, AlignJustify, AlignLeft, AlignRight, Bold, Underline } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
 import {
   isTextAlign,
@@ -19,6 +20,7 @@ export interface RichTextareaSelectionState {
   bold: boolean;
   underline: boolean;
   align: TextAlign;
+  fontSize?: number;
 }
 
 export interface RichTextareaHandle {
@@ -26,7 +28,16 @@ export interface RichTextareaHandle {
   applyBold: () => void;
   applyUnderline: () => void;
   applyAlignment: (align: TextAlign) => void;
+  applyFontSize: (fontSize: number) => void;
   getSelectionState: () => RichTextareaSelectionState;
+}
+
+interface RichTextToolbarProps {
+  selectionState: RichTextareaSelectionState;
+  onBold: () => void;
+  onUnderline: () => void;
+  onAlignment: (align: TextAlign) => void;
+  onFontSize: (fontSize: number) => void;
 }
 
 interface RichTextareaProps {
@@ -34,6 +45,7 @@ interface RichTextareaProps {
   richDocument?: RichTextDocument;
   onChange: (value: string, document: RichTextDocument) => void;
   onFocus?: React.FocusEventHandler<HTMLDivElement>;
+  onActivate?: (handle: RichTextareaHandle) => void;
   onSelectionStateChange?: (state: RichTextareaSelectionState) => void;
   align?: TextAlign;
   onAlignChange?: (align: TextAlign) => void;
@@ -44,6 +56,7 @@ interface RichTextareaProps {
   toolbarClassName?: string;
   showToolbar?: boolean;
   id?: string;
+  compositionField?: boolean;
 }
 
 const ALIGNMENTS: {
@@ -57,14 +70,26 @@ const ALIGNMENTS: {
   { value: 'justify', label: 'Justify', icon: AlignJustify },
 ];
 
+const FONT_SIZES = [8, 9, 10, 11, 12, 14, 16, 18, 20, 24];
 const savedRanges = new WeakMap<HTMLElement, Range>();
 
-const pushRun = (runs: RichTextRun[], text: string, bold: boolean, underline: boolean) => {
+const pushRun = (
+  runs: RichTextRun[],
+  text: string,
+  bold: boolean,
+  underline: boolean,
+  fontSize?: number
+) => {
   const normalized = text.replace(/\u00a0/g, ' ').replace(/\u200b/g, '');
   if (!normalized) return;
 
   const previous = runs[runs.length - 1];
-  if (previous && previous.bold === bold && previous.underline === underline) {
+  if (
+    previous &&
+    previous.bold === bold &&
+    previous.underline === underline &&
+    previous.fontSize === fontSize
+  ) {
     previous.text += normalized;
     return;
   }
@@ -73,6 +98,7 @@ const pushRun = (runs: RichTextRun[], text: string, bold: boolean, underline: bo
     text: normalized,
     ...(bold ? { bold: true } : {}),
     ...(underline ? { underline: true } : {}),
+    ...(fontSize ? { fontSize } : {}),
   });
 };
 
@@ -92,17 +118,19 @@ const collectRuns = (
   runs: RichTextRun[],
   inheritedBold = false,
   inheritedUnderline = false,
-  baseWeight = 400
+  baseWeight = 400,
+  inheritedFontSize?: number,
+  baseFontSize = 14
 ) => {
   if (node.nodeType === Node.TEXT_NODE) {
-    pushRun(runs, node.textContent ?? '', inheritedBold, inheritedUnderline);
+    pushRun(runs, node.textContent ?? '', inheritedBold, inheritedUnderline, inheritedFontSize);
     return;
   }
 
   if (!(node instanceof HTMLElement)) return;
 
   if (node.tagName === 'BR') {
-    pushRun(runs, '\n', inheritedBold, inheritedUnderline);
+    pushRun(runs, '\n', inheritedBold, inheritedUnderline, inheritedFontSize);
     return;
   }
 
@@ -138,12 +166,26 @@ const collectRuns = (
       node.tagName === 'INS' ||
       decoration.includes('underline');
 
-  Array.from(node.childNodes).forEach((child) => collectRuns(child, runs, bold, underline, baseWeight));
+  const computedFontSize = Number.parseFloat(computed.fontSize);
+  const fontSize = Number.isFinite(computedFontSize) && Math.abs(computedFontSize - baseFontSize) > 0.5
+    ? Math.round(computedFontSize * 0.75 * 10) / 10
+    : inheritedFontSize;
+
+  Array.from(node.childNodes).forEach((child) =>
+    collectRuns(child, runs, bold, underline, baseWeight, fontSize, baseFontSize)
+  );
 };
 
-const parseLine = (element: HTMLElement, fallbackAlign: TextAlign, baseWeight: number): RichTextLine => {
+const parseLine = (
+  element: HTMLElement,
+  fallbackAlign: TextAlign,
+  baseWeight: number,
+  baseFontSize: number
+): RichTextLine => {
   const runs: RichTextRun[] = [];
-  Array.from(element.childNodes).forEach((child) => collectRuns(child, runs, false, false, baseWeight));
+  Array.from(element.childNodes).forEach((child) =>
+    collectRuns(child, runs, false, false, baseWeight, undefined, baseFontSize)
+  );
 
   const onlyLineBreaks = runs.length > 0 && runs.every((run) => /^\n+$/.test(run.text));
   const explicitAlign = element.dataset.richAlign;
@@ -172,6 +214,7 @@ const parseEditorDocument = (editor: HTMLElement, fallbackAlign: TextAlign): Ric
   const lines: RichTextLine[] = [];
   let pendingRuns: RichTextRun[] = [];
   const baseWeight = readFontWeight(editor);
+  const baseFontSize = Number.parseFloat(window.getComputedStyle(editor).fontSize) || 14;
 
   const flushPending = () => {
     if (pendingRuns.length === 0) return;
@@ -181,7 +224,7 @@ const parseEditorDocument = (editor: HTMLElement, fallbackAlign: TextAlign): Ric
 
   Array.from(editor.childNodes).forEach((node) => {
     if (node.nodeType === Node.TEXT_NODE) {
-      collectRuns(node, pendingRuns, false, false, baseWeight);
+      collectRuns(node, pendingRuns, false, false, baseWeight, undefined, baseFontSize);
       return;
     }
 
@@ -195,11 +238,11 @@ const parseEditorDocument = (editor: HTMLElement, fallbackAlign: TextAlign): Ric
 
     if (node.tagName === 'DIV' || node.tagName === 'P' || node.tagName === 'LI' || node.tagName === 'SECTION') {
       flushPending();
-      lines.push(parseLine(node, fallbackAlign, baseWeight));
+      lines.push(parseLine(node, fallbackAlign, baseWeight, baseFontSize));
       return;
     }
 
-    collectRuns(node, pendingRuns, false, false, baseWeight);
+    collectRuns(node, pendingRuns, false, false, baseWeight, undefined, baseFontSize);
   });
 
   flushPending();
@@ -268,6 +311,7 @@ const renderDocument = (
       const runElement = window.document.createElement('span');
       runElement.textContent = run.text;
       if (run.bold) runElement.style.fontWeight = '700';
+      if (run.fontSize) runElement.style.fontSize = `${run.fontSize}pt`;
       if (run.underline) {
         runElement.style.textDecoration = 'underline';
         runElement.style.textDecorationSkipInk = 'none';
@@ -320,6 +364,113 @@ export const insertTextIntoRichTextarea = (element: HTMLElement, text: string): 
   return true;
 };
 
+const applyFontSizeToRange = (editor: HTMLElement, range: Range, fontSize: number): Range | null => {
+  const walker = window.document.createTreeWalker(editor, NodeFilter.SHOW_TEXT);
+  const selected: { node: Text; start: number; end: number }[] = [];
+  let node = walker.nextNode();
+
+  while (node) {
+    if (node instanceof Text && range.intersectsNode(node)) {
+      const start = node === range.startContainer ? range.startOffset : 0;
+      const end = node === range.endContainer ? range.endOffset : node.length;
+      if (end > start) selected.push({ node, start, end });
+    }
+    node = walker.nextNode();
+  }
+
+  let firstText: Text | null = null;
+  let lastText: Text | null = null;
+  for (const { node: textNode, start, end } of selected) {
+    const selectedText = start > 0 ? textNode.splitText(start) : textNode;
+    if (end - start < selectedText.length) selectedText.splitText(end - start);
+
+    const span = window.document.createElement('span');
+    span.style.fontSize = `${fontSize}pt`;
+    selectedText.parentNode?.replaceChild(span, selectedText);
+    span.appendChild(selectedText);
+    if (!firstText) firstText = selectedText;
+    lastText = selectedText;
+  }
+
+  if (!firstText || !lastText) return null;
+  const updatedRange = window.document.createRange();
+  updatedRange.setStart(firstText, 0);
+  updatedRange.setEnd(lastText, lastText.length);
+  return updatedRange;
+};
+
+export const RichTextToolbar = ({
+  selectionState,
+  onBold,
+  onUnderline,
+  onAlignment,
+  onFontSize,
+}: RichTextToolbarProps) => (
+  <div data-rich-text-toolbar className="flex items-center gap-0.5">
+    <Button
+      type="button"
+      variant={selectionState.bold ? 'secondary' : 'ghost'}
+      size="icon"
+      className="h-7 w-7"
+      title="Bold (Ctrl+B)"
+      aria-label="Bold"
+      aria-pressed={selectionState.bold}
+      disabled={!selectionState.active}
+      onMouseDown={(event) => event.preventDefault()}
+      onClick={onBold}
+    >
+      <Bold className="size-3.5" />
+    </Button>
+    <Button
+      type="button"
+      variant={selectionState.underline ? 'secondary' : 'ghost'}
+      size="icon"
+      className="h-7 w-7"
+      title="Underline (Ctrl+U)"
+      aria-label="Underline"
+      aria-pressed={selectionState.underline}
+      disabled={!selectionState.active}
+      onMouseDown={(event) => event.preventDefault()}
+      onClick={onUnderline}
+    >
+      <Underline className="size-3.5" />
+    </Button>
+    <span className="mx-1 h-4 w-px bg-border" aria-hidden />
+    {ALIGNMENTS.map(({ value: alignment, label, icon: Icon }) => (
+      <Button
+        key={alignment}
+        type="button"
+        variant={selectionState.align === alignment ? 'secondary' : 'ghost'}
+        size="icon"
+        className="h-7 w-7"
+        title={label}
+        aria-label={label}
+        aria-pressed={selectionState.align === alignment}
+        disabled={!selectionState.active}
+        onMouseDown={(event) => event.preventDefault()}
+        onClick={() => onAlignment(alignment)}
+      >
+        <Icon className="size-3.5" />
+      </Button>
+    ))}
+    <span className="mx-1 h-4 w-px bg-border" aria-hidden />
+    <Select
+      value={String(selectionState.fontSize ?? 12)}
+      onValueChange={(value) => onFontSize(Number(value))}
+      disabled={!selectionState.active}
+    >
+      <SelectTrigger className="h-7 w-[82px] gap-1 px-2 text-xs" aria-label="Selected text font size">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent data-rich-text-toolbar>
+        {FONT_SIZES.map((fontSize) => (
+          <SelectItem key={fontSize} value={String(fontSize)}>{fontSize} pt</SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  </div>
+);
+
 const RichTextarea = React.forwardRef<RichTextareaHandle, RichTextareaProps>(
   (
     {
@@ -327,6 +478,7 @@ const RichTextarea = React.forwardRef<RichTextareaHandle, RichTextareaProps>(
       richDocument,
       onChange,
       onFocus,
+      onActivate,
       onSelectionStateChange,
       align = 'left',
       onAlignChange,
@@ -337,6 +489,7 @@ const RichTextarea = React.forwardRef<RichTextareaHandle, RichTextareaProps>(
       toolbarClassName,
       showToolbar = true,
       id,
+      compositionField = false,
     },
     ref
   ) => {
@@ -360,7 +513,8 @@ const RichTextarea = React.forwardRef<RichTextareaHandle, RichTextareaProps>(
         previous.active === state.active &&
         previous.bold === state.bold &&
         previous.underline === state.underline &&
-        previous.align === state.align
+        previous.align === state.align &&
+        previous.fontSize === state.fontSize
       ) {
         return;
       }
@@ -425,6 +579,13 @@ const RichTextarea = React.forwardRef<RichTextareaHandle, RichTextareaProps>(
         !editor.contains(selection.anchorNode) ||
         !editor.contains(selection.focusNode)
       ) {
+        const toolbarHasFocus =
+          document.activeElement instanceof HTMLElement &&
+          document.activeElement.closest('[data-rich-text-toolbar]') !== null;
+        const savedRange = editor ? savedRanges.get(editor) : undefined;
+        if (toolbarHasFocus && savedRange && editor?.contains(savedRange.commonAncestorContainer)) {
+          return;
+        }
         publishSelectionState({ ...selectionStateRef.current, active: false });
         return;
       }
@@ -441,11 +602,17 @@ const RichTextarea = React.forwardRef<RichTextareaHandle, RichTextareaProps>(
 
       let bold = false;
       let underline = false;
+      let fontSize: number | undefined;
       const anchor = selection.anchorNode;
       const anchorElement = anchor instanceof HTMLElement ? anchor : anchor?.parentElement;
       if (anchorElement) {
         try {
           const computed = window.getComputedStyle(anchorElement);
+          const currentFontSize = Number.parseFloat(computed.fontSize);
+          const baseFontSize = Number.parseFloat(window.getComputedStyle(editor).fontSize) || 14;
+          if (Number.isFinite(currentFontSize) && Math.abs(currentFontSize - baseFontSize) > 0.5) {
+            fontSize = Math.round(currentFontSize * 0.75 * 10) / 10;
+          }
           const weightText = computed.fontWeight ?? '';
           const numericWeight = Number.parseInt(weightText, 10);
           const computedWeight = Number.isNaN(numericWeight)
@@ -469,6 +636,7 @@ const RichTextarea = React.forwardRef<RichTextareaHandle, RichTextareaProps>(
         align: selectedAlign,
         bold,
         underline,
+        fontSize,
       });
     }, [align, publishSelectionState, rememberSelection]);
 
@@ -577,6 +745,30 @@ const RichTextarea = React.forwardRef<RichTextareaHandle, RichTextareaProps>(
       [emitChange, onAlignChange, publishSelectionState, restoreSelection]
     );
 
+    const applyFontSize = React.useCallback(
+      (fontSize: number) => {
+        const editor = editorRef.current;
+        if (!editor || !Number.isFinite(fontSize) || fontSize <= 0) return;
+
+        restoreSelection();
+        const selection = window.getSelection();
+        if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return;
+
+        const range = selection.getRangeAt(0);
+        if (!editor.contains(range.commonAncestorContainer)) return;
+
+        const updatedRange = applyFontSizeToRange(editor, range, fontSize);
+        if (!updatedRange) return;
+
+        selection.removeAllRanges();
+        selection.addRange(updatedRange);
+        savedRanges.set(editor, updatedRange.cloneRange());
+        emitChange();
+        refreshSelectionState();
+      },
+      [emitChange, refreshSelectionState, restoreSelection]
+    );
+
     React.useImperativeHandle(
       ref,
       () => ({
@@ -584,9 +776,10 @@ const RichTextarea = React.forwardRef<RichTextareaHandle, RichTextareaProps>(
         applyBold: () => applyCommand('bold'),
         applyUnderline: () => applyCommand('underline'),
         applyAlignment: (alignment: TextAlign) => applyAlignment(alignment),
+        applyFontSize,
         getSelectionState: () => selectionStateRef.current,
       }),
-      [applyAlignment, applyCommand]
+      [applyAlignment, applyCommand, applyFontSize]
     );
 
     const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
@@ -602,55 +795,17 @@ const RichTextarea = React.forwardRef<RichTextareaHandle, RichTextareaProps>(
       }
     };
 
-    const activeAlign = selectionState.align;
-
     return (
       <div className={cn('space-y-1', className)}>
         {showToolbar && (
           <div className={cn('flex items-center gap-0.5', toolbarClassName)}>
-            <Button
-              type="button"
-              variant={selectionState.bold ? 'secondary' : 'ghost'}
-              size="icon"
-              className="h-7 w-7"
-              title="Bold (Ctrl+B)"
-              aria-label="Bold"
-              aria-pressed={selectionState.bold}
-              onMouseDown={(event) => event.preventDefault()}
-              onClick={() => applyCommand('bold')}
-            >
-              <Bold className="size-3.5" />
-            </Button>
-            <Button
-              type="button"
-              variant={selectionState.underline ? 'secondary' : 'ghost'}
-              size="icon"
-              className="h-7 w-7"
-              title="Underline (Ctrl+U)"
-              aria-label="Underline"
-              aria-pressed={selectionState.underline}
-              onMouseDown={(event) => event.preventDefault()}
-              onClick={() => applyCommand('underline')}
-            >
-              <Underline className="size-3.5" />
-            </Button>
-            <span className="mx-1 h-4 w-px bg-border" aria-hidden />
-            {ALIGNMENTS.map(({ value: alignment, label, icon: Icon }) => (
-              <Button
-                key={alignment}
-                type="button"
-                variant={activeAlign === alignment ? 'secondary' : 'ghost'}
-                size="icon"
-                className="h-7 w-7"
-                title={label}
-                aria-label={label}
-                aria-pressed={activeAlign === alignment}
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={() => applyAlignment(alignment)}
-              >
-                <Icon className="size-3.5" />
-              </Button>
-            ))}
+            <RichTextToolbar
+              selectionState={selectionState}
+              onBold={() => applyCommand('bold')}
+              onUnderline={() => applyCommand('underline')}
+              onAlignment={applyAlignment}
+              onFontSize={applyFontSize}
+            />
           </div>
         )}
         <div className="relative">
@@ -662,6 +817,7 @@ const RichTextarea = React.forwardRef<RichTextareaHandle, RichTextareaProps>(
           <div
             ref={editorRef}
             id={id}
+            data-composition-field={compositionField ? '' : undefined}
             role="textbox"
             aria-multiline="true"
             aria-placeholder={placeholder}
@@ -670,6 +826,15 @@ const RichTextarea = React.forwardRef<RichTextareaHandle, RichTextareaProps>(
             onInput={handleInput}
             onFocus={(event) => {
               rememberSelection();
+              onActivate?.({
+                focus: () => editorRef.current?.focus({ preventScroll: true }),
+                applyBold: () => applyCommand('bold'),
+                applyUnderline: () => applyCommand('underline'),
+                applyAlignment: (alignment) => applyAlignment(alignment),
+                applyFontSize,
+                getSelectionState: () => selectionStateRef.current,
+              });
+              refreshSelectionState();
               onFocus?.(event);
             }}
             onBlur={rememberSelection}

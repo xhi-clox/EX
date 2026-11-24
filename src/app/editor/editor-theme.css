@@ -1,0 +1,384 @@
+/* ==========================================================================
+   Editor light theme
+   --------------------------------------------------------------------------
+   The editor was built with hard-coded dark Tailwind utilities (slate-950 /
+   slate-900 surfaces, white text, translucent white borders).  Rather than
+   rewriting every component, this file re-maps those utilities while the
+   `editor-light` class is present on <body>.  Putting the class on <body>
+   (instead of the editor wrapper) means portaled dialogs, selects and
+   tooltips are themed too.
+
+   Palette mirrors the dashboard:
+     page   #f3f7f6    card   #ffffff    border #d7e5e1
+     ink    #17343a    muted  #587174    teal   #0f766e
+   ========================================================================== */
+
+body.editor-light {
+  color-scheme: light;
+
+  /* shadcn / Tailwind design tokens */
+  --background: 165 22% 96%;        /* #f3f7f6 */
+  --foreground: 190 40% 16%;        /* #17343a */
+  --card: 0 0% 100%;
+  --card-foreground: 190 40% 16%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 190 40% 16%;
+  --primary: 175 77% 26%;           /* #0f766e */
+  --primary-foreground: 0 0% 100%;
+  --secondary: 165 40% 92%;
+  --secondary-foreground: 190 40% 16%;
+  --muted: 165 24% 92%;
+  --muted-foreground: 187 14% 40%;  /* #587174 */
+  --accent: 165 40% 92%;
+  --accent-foreground: 175 77% 26%;
+  --destructive: 0 63% 42%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 165 22% 87%;            /* #d7e5e1 */
+  --input: 165 22% 87%;
+  --ring: 175 55% 45%;
+
+  background-color: #f3f7f6;
+  color: #17343a;
+}
+
+html:has(body.editor-light) {
+  background-color: #f3f7f6;
+}
+
+/* ── Surfaces ─────────────────────────────────────────────────────────── */
+
+body.editor-light [class~="bg-slate-950"] {
+  background-color: #f3f7f6 !important;
+}
+body.editor-light [class~="bg-slate-950/60"] {
+  background-color: #edf5f2 !important;
+}
+body.editor-light [class~="bg-slate-950/80"] {
+  background-color: rgb(255 255 255 / 0.86) !important;
+}
+
+body.editor-light [class~="bg-slate-900"],
+body.editor-light [class~="bg-slate-900/50"],
+body.editor-light [class~="bg-slate-900/60"],
+body.editor-light [class~="bg-slate-900/95"] {
+  background-color: #ffffff !important;
+}
+
+body.editor-light [class~="bg-slate-800"],
+body.editor-light [class~="bg-slate-800/40"],
+body.editor-light [class~="bg-slate-800/60"],
+body.editor-light [class~="bg-slate-800/80"] {
+  background-color: #f4f9f7 !important;
+}
+
+body.editor-light [class~="bg-slate-700"] {
+  background-color: #eef4f2 !important;
+}
+body.editor-light [class~="bg-slate-700/50"] {
+  background-color: #f4f9f7 !important;
+}
+body.editor-light [class~="bg-slate-700/80"] {
+  background-color: #e3f2ee !important;
+}
+body.editor-light [class~="bg-slate-200"] {
+  background-color: #f4f9f7 !important;
+}
+
+/* translucent white overlays become soft teal washes */
+body.editor-light [class~="bg-white/[0.03]"] {
+  background-color: rgb(15 118 110 / 0.03) !important;
+}
+body.editor-light [class~="bg-white/[0.04]"] {
+  background-color: rgb(15 118 110 / 0.04) !important;
+}
+body.editor-light [class~="bg-white/[0.05]"] {
+  background-color: rgb(15 118 110 / 0.05) !important;
+}
+body.editor-light [class~="bg-white/[0.06]"] {
+  background-color: rgb(15 118 110 / 0.06) !important;
+}
+body.editor-light [class~="bg-white/[0.08]"] {
+  background-color: rgb(15 118 110 / 0.08) !important;
+}
+body.editor-light [class~="bg-white/10"] {
+  background-color: #d7e5e1 !important;
+}
+
+/* accent surfaces */
+body.editor-light [class~="bg-teal-400/10"] {
+  background-color: #e3f2ee !important;
+}
+body.editor-light [class~="bg-teal-400/15"] {
+  background-color: #d7ece7 !important;
+}
+body.editor-light [class~="bg-teal-400/[0.04]"] {
+  background-color: rgb(15 118 110 / 0.05) !important;
+}
+body.editor-light [class~="bg-teal-400/[0.06]"] {
+  background-color: rgb(15 118 110 / 0.07) !important;
+}
+body.editor-light [class~="bg-violet-400/10"] {
+  background-color: #f2ecfd !important;
+}
+body.editor-light [class~="bg-purple-500/15"] {
+  background-color: #f3ecfd !important;
+}
+
+/* status surfaces */
+body.editor-light [class~="bg-emerald-900/30"] {
+  background-color: #e8f6ef !important;
+}
+body.editor-light [class~="bg-amber-900/30"] {
+  background-color: #fdf4e6 !important;
+}
+body.editor-light [class~="bg-blue-900/20"] {
+  background-color: #eaf2fd !important;
+}
+body.editor-light [class~="bg-red-900/40"] {
+  background-color: #fdeceb !important;
+}
+
+/* the summary card in the insert panel uses a white gradient */
+body.editor-light [class~="from-white/[0.05]"] {
+  background-image: none !important;
+  background-color: #f4f9f7 !important;
+}
+
+/* preview board / booklet backdrop — a slightly deeper tint so the white
+   paper pages stand out */
+body.editor-light [class~="bg-gray-100"] {
+  background-color: #e7f0ed !important;
+}
+body.editor-light [class~="bg-gray-200"] {
+  background-color: #dfeae6 !important;
+}
+
+/* ── Text ─────────────────────────────────────────────────────────────── */
+
+body.editor-light [class~="text-white"],
+body.editor-light [class~="text-slate-100"],
+body.editor-light [class~="text-slate-200"] {
+  color: #17343a !important;
+}
+body.editor-light [class~="text-slate-300"] {
+  color: #3f5f63 !important;
+}
+body.editor-light [class~="text-slate-400"] {
+  color: #587174 !important;
+}
+body.editor-light [class~="text-slate-500"] {
+  color: #6b8385 !important;
+}
+
+body.editor-light [class~="text-teal-300"],
+body.editor-light [class~="text-teal-300/80"],
+body.editor-light [class~="text-teal-400/90"] {
+  color: #0f766e !important;
+}
+body.editor-light [class~="text-emerald-400/90"] {
+  color: #15803d !important;
+}
+body.editor-light [class~="text-emerald-200"] {
+  color: #047857 !important;
+}
+body.editor-light [class~="text-amber-300"],
+body.editor-light [class~="text-amber-200"] {
+  color: #b45309 !important;
+}
+body.editor-light [class~="text-violet-200"] {
+  color: #6d28d9 !important;
+}
+body.editor-light [class~="text-purple-300"] {
+  color: #7e22ce !important;
+}
+body.editor-light [class~="text-blue-200"],
+body.editor-light [class~="text-blue-200/90"] {
+  color: #1d4ed8 !important;
+}
+body.editor-light [class~="text-red-200"] {
+  color: #b91c1c !important;
+}
+body.editor-light [class~="text-red-400"] {
+  color: #dc2626 !important;
+}
+body.editor-light [class~="text-gray-400"] {
+  color: #8aa1a0 !important;
+}
+
+/* Colored buttons keep white labels. */
+body.editor-light [class~="bg-red-500"][class~="text-white"],
+body.editor-light [class~="bg-purple-600"][class~="text-white"],
+body.editor-light [class~="bg-amber-600"][class~="text-white"] {
+  color: #ffffff !important;
+}
+
+/* ── Borders ──────────────────────────────────────────────────────────── */
+
+body.editor-light [class~="border-white/10"],
+body.editor-light [class~="border-white/[0.05]"],
+body.editor-light [class~="border-white/[0.06]"],
+body.editor-light [class~="border-white/[0.07]"],
+body.editor-light [class~="border-white/[0.08]"] {
+  border-color: #d7e5e1 !important;
+}
+body.editor-light [class~="border-slate-800"],
+body.editor-light [class~="border-slate-700"] {
+  border-color: #d7e5e1 !important;
+}
+body.editor-light [class~="border-slate-600"] {
+  border-color: #cfe0db !important;
+}
+body.editor-light [class~="border-slate-500"] {
+  border-color: #b9d2cc !important;
+}
+
+body.editor-light [class~="border-teal-400/40"] {
+  border-color: rgb(15 118 110 / 0.4) !important;
+}
+body.editor-light [class~="border-violet-400/25"] {
+  border-color: rgb(109 40 217 / 0.28) !important;
+}
+body.editor-light [class~="border-amber-700/60"] {
+  border-color: rgb(180 83 9 / 0.32) !important;
+}
+body.editor-light [class~="border-emerald-700/60"] {
+  border-color: rgb(4 120 87 / 0.32) !important;
+}
+body.editor-light [class~="border-blue-800/60"] {
+  border-color: rgb(29 78 216 / 0.26) !important;
+}
+body.editor-light [class~="border-red-700/70"] {
+  border-color: rgb(185 28 28 / 0.36) !important;
+}
+
+/* ── Hover states ─────────────────────────────────────────────────────── */
+
+body.editor-light [class~="hover:bg-white/10"]:hover {
+  background-color: #e3f2ee !important;
+}
+body.editor-light [class~="hover:bg-white/[0.04]"]:hover {
+  background-color: rgb(15 118 110 / 0.05) !important;
+}
+body.editor-light [class~="hover:bg-white/[0.06]"]:hover {
+  background-color: rgb(15 118 110 / 0.07) !important;
+}
+body.editor-light [class~="hover:bg-white/[0.07]"]:hover {
+  background-color: rgb(15 118 110 / 0.08) !important;
+}
+body.editor-light [class~="hover:bg-white/[0.08]"]:hover {
+  background-color: rgb(15 118 110 / 0.1) !important;
+}
+body.editor-light [class~="hover:bg-slate-800"]:hover {
+  background-color: #eef5f3 !important;
+}
+body.editor-light [class~="hover:bg-slate-700"]:hover {
+  background-color: #e3eeeb !important;
+}
+body.editor-light [class~="hover:bg-slate-600"]:hover {
+  background-color: #d7e5e1 !important;
+}
+
+body.editor-light [class~="hover:border-white/15"]:hover,
+body.editor-light [class~="hover:border-slate-700"]:hover {
+  border-color: #c3d9d4 !important;
+}
+body.editor-light [class~="hover:border-slate-500"]:hover {
+  border-color: #a9c6c0 !important;
+}
+
+body.editor-light [class~="hover:text-white"]:hover,
+body.editor-light [class~="hover:text-teal-300"]:hover {
+  color: #0f766e !important;
+}
+body.editor-light [class~="hover:text-slate-200"]:hover,
+body.editor-light [class~="hover:text-slate-300"]:hover {
+  color: #17343a !important;
+}
+body.editor-light [class~="hover:text-red-400"]:hover {
+  color: #dc2626 !important;
+}
+
+body.editor-light [class~="focus-visible:bg-slate-800/60"]:focus-visible {
+  background-color: #ffffff !important;
+}
+
+/* ── Placeholders ─────────────────────────────────────────────────────── */
+
+body.editor-light [class~="placeholder:text-gray-500"]::placeholder,
+body.editor-light [class~="placeholder:text-slate-500"]::placeholder {
+  color: #6b8385 !important;
+}
+body.editor-light [class~="placeholder:text-gray-400"]::placeholder {
+  color: #8aa1a0 !important;
+}
+
+/* ── `dark:` variants still match because <html> keeps class="dark" ───── */
+
+body.editor-light [class~="dark:bg-slate-700"] {
+  background-color: #f4f9f7 !important;
+}
+body.editor-light [class~="dark:bg-slate-800"],
+body.editor-light [class~="dark:bg-slate-800/50"] {
+  background-color: #ffffff !important;
+}
+body.editor-light [class~="dark:border-slate-600"],
+body.editor-light [class~="dark:border-slate-700"] {
+  border-color: #d7e5e1 !important;
+}
+body.editor-light [class~="dark:border-slate-400"] {
+  border-color: #cfe0db !important;
+}
+body.editor-light [class~="dark:text-white"],
+body.editor-light [class~="dark:text-slate-200"] {
+  color: #17343a !important;
+}
+body.editor-light [class~="dark:text-slate-400"] {
+  color: #6b8385 !important;
+}
+body.editor-light [class~="dark:hover:text-white"]:hover {
+  color: #0f766e !important;
+}
+
+/* ── Specific fixes ───────────────────────────────────────────────────── */
+
+/* Active Edit/Preview tab is `bg-white text-slate-900`; on a white header it
+   would disappear, so tint it. */
+body.editor-light [class~="bg-white"][class~="text-slate-900"] {
+  background-color: #e3f2ee !important;
+  color: #0f766e !important;
+}
+
+/* Softer shadows for floating surfaces (palette, dialogs, pills). */
+body.editor-light [class~="shadow-black/30"] {
+  --tw-shadow-color: rgb(23 52 58 / 0.1) !important;
+}
+body.editor-light [class~="shadow-black/60"] {
+  --tw-shadow-color: rgb(23 52 58 / 0.16) !important;
+}
+
+/* Editable table chrome ------------------------------------------------- */
+
+/* Grid lines for the inline table editor: visible slate on the dark editor,
+   black on the light (paper-like) surface. */
+.editor-table-grid {
+  --table-grid-color: #64748b;
+}
+body.editor-light .editor-table-grid {
+  --table-grid-color: #000000;
+}
+
+/* Light scrollbars for the editor panels. */
+body.editor-light .app-scrollbar {
+  scrollbar-color: rgb(148 163 184 / 0.6) transparent;
+}
+body.editor-light .app-scrollbar::-webkit-scrollbar-thumb {
+  background: rgb(148 163 184 / 0.6);
+  border: 2px solid transparent;
+  border-radius: 9999px;
+  background-clip: padding-box;
+}
+body.editor-light .app-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgb(100 116 139 / 0.8);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}

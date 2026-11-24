@@ -1,5 +1,6 @@
-
 'use client';
+
+import './editor-theme.css';
 
 export default function EditorLayout({
   children,

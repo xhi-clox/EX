@@ -1,6 +1,6 @@
 'use client';
 import { Suspense } from 'react';
-import { useState, useEffect, useRef, useLayoutEffect, useCallback } from 'react';
+import { useState, useEffect, useRef, useLayoutEffect, useCallback, Fragment } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -12,6 +12,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Card, CardContent } from '@/components/ui/card';
+import { Switch } from '@/components/ui/switch';
 import { Plus, Type, Pilcrow, Image as ImageIcon, Trash2, ArrowUp, ArrowDown, ListOrdered, TableIcon, PlusCircle, MinusCircle, BookMarked, Minus, Sparkles, LogOut, Save, ChevronDown, ChevronUp, Square } from 'lucide-react';
 import Link from 'next/link';
 import { useSearchParams, useRouter } from 'next/navigation';
@@ -28,17 +29,31 @@ import { imageFilterCss, imageGroupStyle, imageItemStyle, getQuestionImages, typ
 import { defaultHeaderTemplate, normalizeHeaderTemplate, HEADER_LAYOUT_VERSION, type HeaderRow } from './header-template';
 import HeaderBuilder from './HeaderBuilder';
 import RichTextarea, { insertTextIntoRichTextarea } from './RichTextarea';
-import EditableTable from './EditableTable';
+import type { RichTextareaHandle, RichTextareaSelectionState } from './RichTextarea';
+import EditableTable, { MIN_TABLE_COL, TABLE_GUTTER_WIDTH } from './EditableTable';
 import { getAlternativeAlign, getAlternativeContent, getAlternativeDocument, normalizeEscapedNewlines, normalizeRichTextDocument, plainTextToAlignedRichTextDocument, stripUniformBoldFlags } from './text-format';
 import type { QuestionAlternative, RichTextDocument, TextAlign } from './text-format';
 import 'katex/dist/katex.min.css';
 import LatexRenderer from './LatexRenderer';
 import { migrateLocalDataIfNeeded } from '@/lib/local-migration';
+import { cn } from '@/lib/utils';
+import { ToastAction } from '@/components/ui/toast';
+import { Copy, Undo2, Redo2, Eye, Download, PanelRight, Keyboard, ScanText, Sun, Moon } from 'lucide-react';
+import CommandPalette, { type PaletteCommand } from './CommandPalette';
+import ShortcutsDialog from './ShortcutsDialog';
+import InsertPanel from './InsertPanel';
+import { SHORTCUTS, matchCombo, isTypingTarget } from './shortcuts';
+import { INSERT_ITEMS, TYPE_LABEL } from './insert-items';
+import type { SaveStatus } from './EditorHeader';
+
+/** Editor colour theme. Light mirrors the dashboard; dark is the original. */
+export type EditorTheme = 'light' | 'dark';
 
 
 const generateId = (prefix: string) => {
     return `${prefix}${Date.now()}${Math.random().toString(36).substring(2, 9)}`;
 };
+const mmToPx = (mm: number) => mm * 3.7795275591;
 
 const bengaliDigitMap: Record<string, string> = {
     '০': '0', '১': '1', '২': '2', '৩': '3', '৪': '4',
@@ -236,6 +251,21 @@ const ensureUniqueIds = (questions: Question[]): Question[] => {
         text: normalizeEscapedNewlines(String(option?.text ?? '')),
       }));
     }
+    if (raw?.mcqOptionType === 'standard' || raw?.mcqOptionType === 'statement-combination') {
+      question.mcqOptionType = raw.mcqOptionType;
+    } else {
+      delete question.mcqOptionType;
+    }
+    if (raw?.optionsInline === true) {
+      question.optionsInline = true;
+    } else {
+      delete question.optionsInline;
+    }
+    if (Array.isArray(raw?.mcqStatements)) {
+      question.mcqStatements = raw.mcqStatements
+        .slice(0, 3)
+        .map((statement: unknown) => normalizeEscapedNewlines(String(statement ?? '')));
+    }
     const importedTextBoxContent = extractImportedText(raw?.textBoxContent, 'textBoxContent');
     if (importedTextBoxContent.length > 0) {
       question.textBoxContent = importedTextBoxContent;
@@ -414,6 +444,10 @@ export type NumberingFormat = 'english-numeric' | 'bangla-alpha' | 'bangla-numer
 export type MainNumberingFormat = 'english-numeric' | 'bangla-numeric' | 'roman' | null;
 
 export type MarksFormat = 'bangla-numeric' | 'english-numeric';
+export type McqOptionType = 'standard' | 'statement-combination';
+
+const MCQ_STATEMENT_LABELS = ['i', 'ii', 'iii'] as const;
+const MCQ_COMBINATION_OPTIONS = ['i ও ii', 'i ও iii', 'ii ও iii', 'i, ii ও iii'] as const;
 
 export interface Question {
   id: string;
@@ -426,6 +460,9 @@ export interface Question {
   textBoxDocument?: RichTextDocument;
   marks?: number;
   options?: { id: string; text: string }[];
+  mcqOptionType?: McqOptionType;
+  optionsInline?: boolean;
+  mcqStatements?: string[];
   subQuestions?: Question[];
   alternatives?: (string | QuestionAlternative)[];
   numberingFormat?: NumberingFormat | null;
@@ -489,6 +526,7 @@ export type PageContent = {
     formLines?: readonly [number, number] | null;
     stemLines?: readonly [number, number] | null;
     alternativeRange?: readonly [number, number] | null;
+    mcqStatementRows?: readonly [number, number] | null;
 }
 
 export interface HalfPayload {
@@ -628,13 +666,33 @@ function EditorPage() {
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
 
+  // Typing bursts are merged into ONE undo step (so Ctrl+Z reverts a sentence,
+  // not a single character); add / move / delete / duplicate always get their own.
+  const structuralChangeRef = useRef(false);
+  const lastEditAtRef = useRef(0);
+  const burstStartRef = useRef(0);
+
   useEffect(() => {
     if (!paper) return;
     if (skipHistoryPushRef.current) {
       skipHistoryPushRef.current = false;
+      lastEditAtRef.current = 0;
     } else {
-      paperHistoryRef.current.push(paper);
-      if (paperHistoryRef.current.length > 100) paperHistoryRef.current.shift();
+      const now = Date.now();
+      const isBurst =
+        !structuralChangeRef.current &&
+        paperHistoryRef.current.length > 1 &&
+        now - lastEditAtRef.current < 700 &&
+        now - burstStartRef.current < 5000;
+      if (isBurst) {
+        paperHistoryRef.current[paperHistoryRef.current.length - 1] = paper;
+      } else {
+        paperHistoryRef.current.push(paper);
+        burstStartRef.current = now;
+        if (paperHistoryRef.current.length > 100) paperHistoryRef.current.shift();
+      }
+      structuralChangeRef.current = false;
+      lastEditAtRef.current = now;
       paperFutureRef.current = [];
     }
     setCanUndo(paperHistoryRef.current.length > 1);
@@ -662,36 +720,149 @@ function EditorPage() {
     setCanRedo(paperFutureRef.current.length > 0);
   };
 
-  // Keyboard shortcuts: Ctrl+Z = undo, Ctrl+Shift+Z / Ctrl+Y = redo, Ctrl+S = save
+  // ── Editor UI state used by the shortcut layer, palette and save indicator
+  const [activeQuestionId, setActiveQuestionId] = useState<string | null>(null);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [paletteMode, setPaletteMode] = useState<'all' | 'insert'>('all');
+  const [helpOpen, setHelpOpen] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
+
+  // ── Theme ──────────────────────────────────────────────────────────────
+  // Light is the default (matches the dashboard); dark is opt-in and the
+  // choice is remembered. The class lives on <body> so portaled dialogs,
+  // selects and tooltips are themed as well.
+  const [theme, setTheme] = useState<EditorTheme>('light');
+
+  useLayoutEffect(() => {
+    try {
+      const stored = window.localStorage.getItem('editor-theme');
+      if (stored === 'dark' || stored === 'light') setTheme(stored);
+    } catch {
+      /* localStorage unavailable — keep the default */
+    }
+  }, []);
+
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+    document.body.classList.toggle('editor-light', theme === 'light');
+    return () => document.body.classList.remove('editor-light');
+  }, [theme]);
+
+  const toggleTheme = useCallback(() => {
+    setTheme(prev => {
+      const next: EditorTheme = prev === 'light' ? 'dark' : 'light';
+      try {
+        window.localStorage.setItem('editor-theme', next);
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  }, []);
+
+  const pendingFocusRef = useRef<string | null>(null);
+  const pendingNestedFocusRef = useRef<{ kind: 'sub-question' | 'option'; id: string } | null>(null);
+  const shortcutActionsRef = useRef<Record<string, () => void>>({});
+  const tabNavigationRef = useRef<(target: HTMLElement, direction: 1 | -1) => boolean>(() => false);
+
+  // Focus + scroll to a freshly inserted / duplicated question
+  useEffect(() => {
+    const id = pendingFocusRef.current;
+    if (id) {
+      const el = document.querySelector<HTMLElement>(`[data-question-id="${id}"]`);
+      if (!el) return;
+      pendingFocusRef.current = null;
+      el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      el.querySelector<HTMLElement>('[contenteditable="true"], textarea, input:not([type="number"])')?.focus({ preventScroll: true });
+      return;
+    }
+
+    const pendingNested = pendingNestedFocusRef.current;
+    if (!pendingNested) return;
+    const selector = pendingNested.kind === 'sub-question'
+      ? `[data-sub-question-id="${pendingNested.id}"] [contenteditable="true"], [data-sub-question-id="${pendingNested.id}"] input:not([type="number"])`
+      : `[data-option-id="${pendingNested.id}"]`;
+    const target = document.querySelector<HTMLElement>(selector);
+    if (!target) return;
+    pendingNestedFocusRef.current = null;
+    target.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    target.focus({ preventScroll: true });
+  }, [paper]);
+
+  // One global key handler. Modifier shortcuts work everywhere (even while typing);
+  // bare-key shortcuts like "?" only fire outside text fields.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.isComposing || e.defaultPrevented) return;
+      const target = e.target instanceof HTMLElement
+        ? e.target
+        : e.target instanceof Node
+          ? e.target.parentElement
+          : null;
+      if (e.key === 'Tab' && !e.ctrlKey && !e.metaKey && !e.altKey && !target?.closest('[role="dialog"]')) {
+        if (target && tabNavigationRef.current(target, e.shiftKey ? -1 : 1)) {
+          e.preventDefault();
+          return;
+        }
+      }
+      const typing = isTypingTarget(e.target);
+      for (const def of SHORTCUTS) {
+        if (!matchCombo(e, def.combo)) continue;
+        if (!def.combo.mod && !def.combo.alt && typing) continue;
+        const action = shortcutActionsRef.current[def.id];
+        if (!action) continue;
         e.preventDefault();
-        handleSave();
-      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
-        e.preventDefault();
-        if (e.shiftKey) redo();
-        else undo();
-      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') {
-        e.preventDefault();
-        redo();
+        action();
+        return;
       }
     };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  });
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
 
   const [focusedInput, setFocusedInput] = useState<{ element: HTMLElement; id: string } | null>(null);
+  const activeRichTextareaRef = useRef<RichTextareaHandle | null>(null);
+  const [richTextSelection, setRichTextSelection] = useState<RichTextareaSelectionState>({
+    active: false,
+    bold: false,
+    underline: false,
+    align: 'left',
+  });
+  const activateRichTextarea = useCallback((handle: RichTextareaHandle) => {
+    activeRichTextareaRef.current = handle;
+    setRichTextSelection(handle.getSelectionState());
+  }, []);
+  const richTextareaControls = {
+    onActivate: activateRichTextarea,
+    onSelectionStateChange: setRichTextSelection,
+    showToolbar: false,
+    compositionField: true,
+  };
+  const editorScrollRef = useRef<HTMLElement>(null);
 
   const [pages, setPages] = useState<PageContent[][]>([]);
   const [isDownloading, setIsDownloading] = useState(false);
   const [showAddQuestions, setShowAddQuestions] = useState(true);
   const [isRightRailHidden, setIsRightRailHidden] = useState(false);
   const [isPreview, setIsPreview] = useState(false);
+  const boardViewportRef = useRef<HTMLDivElement>(null);
+  const savedEditorScrollTopRef = useRef(0);
+  const savedPreviewScrollRef = useRef({ left: 0, top: 0 });
+  const setPreviewMode = useCallback((value: React.SetStateAction<boolean>) => {
+    const nextIsPreview = typeof value === 'function' ? value(isPreview) : value;
+    if (nextIsPreview && !isPreview) {
+      savedEditorScrollTopRef.current = editorScrollRef.current?.scrollTop ?? savedEditorScrollTopRef.current;
+    }
+    if (!nextIsPreview && isPreview) {
+      const viewport = boardViewportRef.current;
+      if (viewport) {
+        savedPreviewScrollRef.current = { left: viewport.scrollLeft, top: viewport.scrollTop };
+      }
+    }
+    setIsPreview(nextIsPreview);
+  }, [isPreview]);
   const [isEditingHeaderLayout, setIsEditingHeaderLayout] = useState(false);
   const [boardZoom, setBoardZoom] = useState(1);
   const [isSpaceHeld, setIsSpaceHeld] = useState(false);
-  const boardViewportRef = useRef<HTMLDivElement>(null);
   const boardPanRef = useRef({ active: false, lastX: 0, lastY: 0 });
   const [bookletPages, setBookletPages] = useState<BookletSpread[]>([]);
   const hiddenRenderRef = useRef<HTMLDivElement>(null);
@@ -726,10 +897,22 @@ function EditorPage() {
 
   useEffect(() => {
     if (!isPreview) {
-      setBoardZoom(1);
-      if (boardViewportRef.current) {
-        boardViewportRef.current.scrollTo({ left: 0, top: 0 });
-      }
+      activeRichTextareaRef.current = null;
+      setRichTextSelection({
+        active: false,
+        bold: false,
+        underline: false,
+        align: 'left',
+      });
+    }
+  }, [isPreview]);
+
+  useLayoutEffect(() => {
+    if (isPreview) {
+      const { left, top } = savedPreviewScrollRef.current;
+      boardViewportRef.current?.scrollTo({ left, top });
+    } else {
+      editorScrollRef.current?.scrollTo({ left: 0, top: savedEditorScrollTopRef.current });
     }
   }, [isPreview]);
 
@@ -784,6 +967,7 @@ function EditorPage() {
     paperRef.current = value;
 
     const save = async (): Promise<boolean> => {
+      setSaveStatus('saving');
       try {
         const response = await fetch(
           `/api/projects/${encodeURIComponent(projectId)}/paper`,
@@ -800,6 +984,7 @@ function EditorPage() {
         }
 
         lastSaveErrorRef.current = null;
+        setSaveStatus('saved');
 
         if (options?.notify) {
           toast({
@@ -811,6 +996,7 @@ function EditorPage() {
         return true;
       } catch (error) {
         console.error("Failed to save paper to Neon", error);
+        setSaveStatus('error');
         if (options?.notify || lastSaveErrorRef.current !== 'failed') {
           lastSaveErrorRef.current = 'failed';
           toast({
@@ -855,6 +1041,7 @@ function EditorPage() {
       autosaveReadyRef.current = true;
       return;
     }
+    setSaveStatus('dirty');
     const timer = window.setTimeout(() => {
       void persistPaper(paper);
     }, 600);
@@ -945,6 +1132,15 @@ function EditorPage() {
   }, [searchParams, router, paper, toast, persistPaper]);
 
   const handleFocus = <T extends HTMLElement>(e: React.FocusEvent<T>, id: string) => {
+    if (!e.currentTarget.isContentEditable) {
+      activeRichTextareaRef.current = null;
+      setRichTextSelection({
+        active: false,
+        bold: false,
+        underline: false,
+        align: 'left',
+      });
+    }
     setFocusedInput({ element: e.currentTarget, id });
   };
 
@@ -1228,7 +1424,9 @@ function EditorPage() {
 
     const onTableMarginLeftChange = (id: string, value: number) => {
         updateTableQuestion(id, (q) => {
-            q.tableMarginLeft = Math.min(300, Math.max(0, Math.round(value)));
+            const pageContentWidth = settings.width - mmToPx(settings.margins.left + settings.margins.right);
+            const maxTableMarginLeft = Math.max(0, pageContentWidth - TABLE_GUTTER_WIDTH - MIN_TABLE_COL);
+            q.tableMarginLeft = Math.min(300, maxTableMarginLeft, Math.max(0, Math.round(value)));
         });
     };
 
@@ -1265,13 +1463,15 @@ function EditorPage() {
         onImageChange,
     };
 
-  const addSubQuestion = (questionId: string, type: Question['type'] = 'short') => {
+  const addSubQuestion = (questionId: string, type: Question['type'] = 'short', afterSubQuestionId?: string) => {
+    const newSubQuestionId = generateId('sq');
+    pendingNestedFocusRef.current = { kind: 'sub-question', id: newSubQuestionId };
     setPaper(prev => produce(prev, draft => {
         if (!draft) return;
         const question = draft.questions.find(q => q.id === questionId);
         if (question) {
             const newSubQuestion: Question = {
-                id: generateId('sq'),
+                id: newSubQuestionId,
                 type: type,
                 content: 'New question...',
                 marks: 1,
@@ -1287,7 +1487,11 @@ function EditorPage() {
             if (!question.subQuestions) {
                 question.subQuestions = [];
             }
-            question.subQuestions.push(newSubQuestion);
+            const afterIndex = afterSubQuestionId
+              ? question.subQuestions.findIndex(sq => sq.id === afterSubQuestionId)
+              : -1;
+            if (afterIndex >= 0) question.subQuestions.splice(afterIndex + 1, 0, newSubQuestion);
+            else question.subQuestions.push(newSubQuestion);
         }
     }));
   };
@@ -1353,6 +1557,8 @@ function EditorPage() {
   };
 
   const addOption = (questionId: string, subQuestionId?: string) => {
+    const newOption = { id: generateId('opt'), text: 'New Option' };
+    pendingNestedFocusRef.current = { kind: 'option', id: newOption.id };
     setPaper(prev => produce(prev, draft => {
       if (!draft) return;
       const q = draft.questions.find(q => q.id === questionId);
@@ -1365,12 +1571,63 @@ function EditorPage() {
       }
 
       if (target) {
-        const newOption = { id: generateId('opt'), text: 'New Option' };
         if (!target.options) {
           target.options = [];
         }
         target.options.push(newOption);
       }
+    }));
+  };
+
+  const updateMcqOptionType = (questionId: string, subQuestionId: string | undefined, type: McqOptionType) => {
+    const newOptionIds = MCQ_COMBINATION_OPTIONS.map(() => generateId('opt'));
+    setPaper(prev => produce(prev, draft => {
+      if (!draft) return;
+      const question = draft.questions.find(q => q.id === questionId);
+      const target = subQuestionId
+        ? question?.subQuestions?.find(sq => sq.id === subQuestionId)
+        : question;
+      if (!target) return;
+
+      target.mcqOptionType = type;
+      if (type !== 'statement-combination') return;
+
+      target.mcqStatements = MCQ_STATEMENT_LABELS.map((_, index) => target.mcqStatements?.[index] ?? '');
+      target.options = MCQ_COMBINATION_OPTIONS.map((text, index) => ({
+        id: target.options?.[index]?.id ?? newOptionIds[index],
+        text,
+      }));
+    }));
+  };
+
+  const updateMcqOptionsInline = (questionId: string, subQuestionId: string | undefined, inline: boolean) => {
+    setPaper(prev => produce(prev, draft => {
+      if (!draft) return;
+      const question = draft.questions.find(q => q.id === questionId);
+      const target = subQuestionId
+        ? question?.subQuestions?.find(sq => sq.id === subQuestionId)
+        : question;
+      if (target) target.optionsInline = inline;
+    }));
+  };
+
+  const updateMcqStatement = (
+    questionId: string,
+    subQuestionId: string | undefined,
+    statementIndex: number,
+    value: string
+  ) => {
+    setPaper(prev => produce(prev, draft => {
+      if (!draft || statementIndex < 0 || statementIndex >= MCQ_STATEMENT_LABELS.length) return;
+      const question = draft.questions.find(q => q.id === questionId);
+      const target = subQuestionId
+        ? question?.subQuestions?.find(sq => sq.id === subQuestionId)
+        : question;
+      if (!target) return;
+
+      target.mcqStatements = MCQ_STATEMENT_LABELS.map((_, index) =>
+        index === statementIndex ? value : target.mcqStatements?.[index] ?? ''
+      );
     }));
   };
 
@@ -1492,6 +1749,7 @@ function EditorPage() {
   };
 
   const moveQuestion = (index: number, direction: 'up' | 'down') => {
+    structuralChangeRef.current = true;
     setPaper(prev => produce(prev, draft => {
         if (!draft) return;
         const newIndex = direction === 'up' ? index - 1 : index + 1;
@@ -1504,13 +1762,15 @@ function EditorPage() {
   };
 
   const removeQuestion = (id: string) => {
+    structuralChangeRef.current = true;
     setPaper(prev => produce(prev, draft => {
         if (!draft) return;
         draft.questions = draft.questions.filter(q => q.id !== id);
     }));
   };
 
-  const addQuestion = (type: Question['type']) => {
+  const addQuestion = (type: Question['type'], afterId?: string | null) => {
+    structuralChangeRef.current = true;
     const newQuestion: Question = {
       id: generateId('q'),
       type: type,
@@ -1520,6 +1780,11 @@ function EditorPage() {
 
     if (type === 'section-header') {
         newQuestion.content = 'ক বিভাগ';
+        delete newQuestion.marks;
+    }
+
+    if (type === 'or') {
+        newQuestion.content = 'অথবা';
         delete newQuestion.marks;
     }
 
@@ -1601,10 +1866,64 @@ case 'fill-in-the-blanks':
         ];
     }
 
+    // New questions go right after the one being edited (or the end of the paper)
+    const anchorId = afterId === undefined ? activeQuestionId : afterId;
+    pendingFocusRef.current = newQuestion.id;
+    setActiveQuestionId(newQuestion.id);
     setPaper(prev => produce(prev, draft => {
       if (!draft) return;
-      draft.questions.push(newQuestion);
+      const at = anchorId ? draft.questions.findIndex(q => q.id === anchorId) : -1;
+      if (at >= 0) draft.questions.splice(at + 1, 0, newQuestion);
+      else draft.questions.push(newQuestion);
     }));
+  };
+
+  // Deep-copy a question, giving every nested id (sub-questions, options, images…) a fresh value
+  const cloneWithNewIds = (value: any): any => {
+    if (Array.isArray(value)) return value.map(v => cloneWithNewIds(v));
+    if (value && typeof value === 'object') {
+      const out: any = {};
+      for (const [k, v] of Object.entries(value)) {
+        if (/(Document|Rich)$/.test(k)) out[k] = JSON.parse(JSON.stringify(v));
+        else if (k === 'id' && typeof v === 'string') out[k] = generateId('c');
+        else out[k] = cloneWithNewIds(v);
+      }
+      return out;
+    }
+    return value;
+  };
+
+  const duplicateQuestion = (id: string) => {
+    structuralChangeRef.current = true;
+    const original = paper?.questions.find(q => q.id === id);
+    if (!original) return;
+    const copy: Question = cloneWithNewIds(original);
+    pendingFocusRef.current = copy.id;
+    setActiveQuestionId(copy.id);
+    setPaper(prev => produce(prev, draft => {
+      if (!draft) return;
+      const at = draft.questions.findIndex(q => q.id === id);
+      draft.questions.splice(at + 1, 0, copy);
+    }));
+  };
+
+  const deleteWithUndo = (id: string) => {
+    removeQuestion(id);
+    if (activeQuestionId === id) setActiveQuestionId(null);
+    toast({
+      title: 'প্রশ্নটি মুছে ফেলা হয়েছে',
+      action: <ToastAction altText="Undo" onClick={() => undo()}>ফিরিয়ে আনুন</ToastAction>,
+    });
+  };
+
+  const moveActive = (direction: 'up' | 'down') => {
+    if (!paper || !activeQuestionId) return;
+    const index = paper.questions.findIndex(q => q.id === activeQuestionId);
+    if (index < 0) return;
+    moveQuestion(index, direction);
+    window.setTimeout(() => {
+      document.querySelector(`[data-question-id="${activeQuestionId}"]`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }, 30);
   };
 
   const addNote = () => {
@@ -1646,19 +1965,35 @@ case 'fill-in-the-blanks':
     return text.includes('$') || text.includes('\\');
   }
 
-  const QuestionActions = ({ index }: { index: number }) => (
-    <div className="absolute top-0 right-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10">
-       <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => moveQuestion(index, 'up')} disabled={index === 0}>
-        <ArrowUp className="size-4" />
-      </Button>
-      <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => moveQuestion(index, 'down')} disabled={!paper || index === paper.questions.length - 1}>
-        <ArrowDown className="size-4" />
-      </Button>
-      <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => paper && removeQuestion(paper.questions[index].id)}>
-        <Trash2 className="size-4" />
-      </Button>
-    </div>
-  );
+  // Floating action pill: visible on hover, keyboard focus, or when the question is active
+  const questionActions = (index: number) => {
+    const q = paper?.questions[index];
+    if (!q) return null;
+    const btn = 'inline-flex size-7 items-center justify-center rounded-md text-slate-400 transition-colors hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-400/60 disabled:pointer-events-none disabled:opacity-30';
+    return (
+      <div
+        className={cn(
+          'absolute -top-3.5 right-3 z-10 flex items-center gap-0.5 rounded-lg border border-white/10 bg-slate-900/95 p-0.5 shadow-lg shadow-black/30 backdrop-blur transition-opacity',
+          'opacity-0 group-hover:opacity-100 group-focus-within:opacity-100',
+          activeQuestionId === q.id && 'opacity-100'
+        )}
+      >
+        <button type="button" className={btn} title="উপরে সরান (Alt+↑)" aria-label="উপরে সরান" onClick={() => moveQuestion(index, 'up')} disabled={index === 0}>
+          <ArrowUp className="size-3.5" />
+        </button>
+        <button type="button" className={btn} title="নিচে সরান (Alt+↓)" aria-label="নিচে সরান" onClick={() => moveQuestion(index, 'down')} disabled={!paper || index === paper.questions.length - 1}>
+          <ArrowDown className="size-3.5" />
+        </button>
+        <button type="button" className={btn} title="কপি করুন (Ctrl+D)" aria-label="কপি করুন" onClick={() => duplicateQuestion(q.id)}>
+          <Copy className="size-3.5" />
+        </button>
+        <span className="mx-0.5 h-4 w-px bg-white/10" />
+        <button type="button" className={cn(btn, 'hover:bg-red-500/15 hover:text-red-400')} title="মুছুন (Alt+X)" aria-label="মুছুন" onClick={() => deleteWithUndo(q.id)}>
+          <Trash2 className="size-3.5" />
+        </button>
+      </div>
+    );
+  };
 
   const renderQuestion = (question: Question, index: number) => {
     if (!paper) return null;
@@ -1668,8 +2003,8 @@ case 'fill-in-the-blanks':
 
     if (question.type === 'or') {
         return (
-            <Card key={question.id} className="group relative border-0 bg-transparent shadow-none py-1">
-                <QuestionActions index={index} />
+            <Card key={question.id} data-question-id={question.id} onFocusCapture={() => setActiveQuestionId(question.id)} onClick={() => setActiveQuestionId(question.id)} className={cn('group relative rounded-xl border-0 bg-transparent py-1 shadow-none transition-all', activeQuestionId === question.id && 'bg-teal-400/[0.04]')}>
+                {questionActions(index)}
                 <div className="text-center font-bold text-base select-none">{question.content || 'অথবা'}</div>
             </Card>
         );
@@ -1677,9 +2012,10 @@ case 'fill-in-the-blanks':
 
     if (question.type === 'section-header') {
         return (
-            <Card key={question.id} className="group relative p-4 bg-slate-100 dark:bg-slate-800">
-                 <QuestionActions index={index} />
+            <Card key={question.id} data-question-id={question.id} onFocusCapture={() => setActiveQuestionId(question.id)} onClick={() => setActiveQuestionId(question.id)} className={cn('group relative rounded-xl border p-3 shadow-none transition-all', activeQuestionId === question.id ? 'border-teal-400/40 bg-slate-800/80 ring-1 ring-teal-400/25' : 'border-slate-800 bg-slate-800/40 hover:border-slate-700')}>
+                 {questionActions(index)}
                  <Input
+                    data-composition-field
                     value={question.content}
                     onFocus={(e) => handleFocus(e, `content-${question.id}`)}
                     onChange={(e) => handleQuestionChange(question.id, 'content', e.target.value)}
@@ -1690,8 +2026,8 @@ case 'fill-in-the-blanks':
     }
 
     const questionCard = (children: React.ReactNode) => (
-        <Card key={question.id} className="group relative p-4 space-y-3 bg-slate-50 dark:bg-slate-900">
-          <QuestionActions index={index} />
+        <Card key={question.id} data-question-id={question.id} onFocusCapture={() => setActiveQuestionId(question.id)} onClick={() => setActiveQuestionId(question.id)} className={cn('group relative space-y-3 rounded-xl border p-4 shadow-none transition-all duration-150', activeQuestionId === question.id ? 'border-teal-400/40 bg-slate-900 ring-1 ring-teal-400/25' : 'border-slate-800 bg-slate-900/60 hover:border-slate-700')}>
+          {questionActions(index)}
           <div className="flex items-start justify-between">
             <Label className="font-bold pt-1.5">{(() => {
               const num = question.numberingLabel ?? getNumbering(paper.mainNumberingFormat === undefined ? 'bangla-numeric' : paper.mainNumberingFormat, questionNumber - 1);
@@ -1699,6 +2035,7 @@ case 'fill-in-the-blanks':
             })()}</Label>
             <div className="flex-1 ml-2">
                  <RichTextarea
+                    {...richTextareaControls}
                     value={question.content}
                     richDocument={question.contentDocument}
                     onFocus={(e) => handleFocus(e, `content-${question.id}`)}
@@ -1716,6 +2053,7 @@ case 'fill-in-the-blanks':
                  {question.type === 'text-box' && (
                     <div className="mt-2 border border-slate-500 dark:border-slate-400 rounded-sm bg-white dark:bg-slate-800 p-2">
                        <RichTextarea
+                          {...richTextareaControls}
                           value={question.textBoxContent ?? ''}
                           richDocument={question.textBoxDocument}
                           onFocus={(e) => handleFocus(e, `textbox-${question.id}`)}
@@ -1735,6 +2073,7 @@ case 'fill-in-the-blanks':
                          <span className="italic font-semibold pt-8 shrink-0">অথবা,</span>
                          <div className="flex-1">
                            <RichTextarea
+                             {...richTextareaControls}
                              value={alternativeContent}
                              richDocument={getAlternativeDocument(alternative)}
                              onFocus={(e) => handleFocus(e, `alternative-${question.id}-${altIndex}`)}
@@ -1822,7 +2161,7 @@ case 'fill-in-the-blanks':
         <>
             <div className="pl-6 space-y-2">
             {question.subQuestions?.map((sq, sqIndex) => (
-                <div key={sq.id} className="flex items-start gap-2 pt-2">
+                <div key={sq.id} data-sub-question-id={sq.id} className="flex items-start gap-2 pt-2">
                 <span className="font-semibold pt-2">{(() => {
                   const num = sq.numberingLabel ?? getNumbering(question.numberingFormat, sqIndex);
                   return num ? `${num})` : '';
@@ -1834,6 +2173,7 @@ case 'fill-in-the-blanks':
                         const subContentEditor = (
                           <>
                             <RichTextarea
+                                {...richTextareaControls}
                                 value={sq.content}
                                 richDocument={sq.contentDocument}
                                 onFocus={(e) => handleFocus(e, `content-${sq.id}`)}
@@ -1864,30 +2204,7 @@ case 'fill-in-the-blanks':
                         <Trash2 className="size-4" />
                     </Button>
                   </div>
-                  {sq.type === 'mcq' && (
-                    <div className="pl-8 space-y-2 group/sub">
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                            {sq.options?.map((opt, optIndex) => (
-                                <div key={opt.id} className="flex items-center gap-2">
-                    <span className="font-semibold">{(() => {
-                      const num = getNumbering('bangla-alpha', optIndex);
-                      return num ? `${num})` : '';
-                    })()}</span>
-                                <Input
-                                    value={opt.text}
-                                    onInput={(e) => handleOptionChange(question.id, opt.id, (e.target as HTMLInputElement).value, sq.id)}
-                                    onFocus={(e) => handleFocus(e, `option-${question.id}-${sq.id}-${opt.id}`)}
-                                    className="bg-white dark:bg-slate-800"
-                                />
-                                <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive shrink-0 opacity-0 group-hover/sub:opacity-100" onClick={() => removeOption(question.id, opt.id, sq.id)}>
-                                    <Trash2 className="size-4" />
-                                </Button>
-                                </div>
-                            ))}
-                        </div>
-                         <Button variant="outline" size="sm" onClick={() => addOption(question.id, sq.id)}><Plus className="mr-2 size-4" /> অপশন যোগ করুন</Button>
-                    </div>
-                  )}
+                  {sq.type === 'mcq' && mcqOptionEditor(sq, sq.id)}
                 </div>
                 </div>
             ))}
@@ -1905,9 +2222,109 @@ case 'fill-in-the-blanks':
           colWidths={question.tableColWidths}
           rowHeights={question.tableRowHeights}
           tableMarginLeft={question.tableMarginLeft}
+          maxWidth={Math.max(0, settings.width - mmToPx(settings.margins.left + settings.margins.right))}
           callbacks={tableEditCallbacks}
+          onActivateRichTextarea={activateRichTextarea}
+          onRichTextareaSelectionStateChange={setRichTextSelection}
           forceEditing
         />
+      );
+
+      const mcqOptionEditor = (target: Question, subQuestionId?: string) => (
+        <div className="pl-8 space-y-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <Label htmlFor={`mcq-option-type-${target.id}`} className="text-sm">অপশনের ধরন:</Label>
+            <Select
+              value={target.mcqOptionType ?? 'standard'}
+              onValueChange={(value) => {
+                if (value === 'standard' || value === 'statement-combination') {
+                  updateMcqOptionType(question.id, subQuestionId, value);
+                }
+              }}
+            >
+              <SelectTrigger id={`mcq-option-type-${target.id}`} className="h-8 w-64 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="standard">সাধারণ MCQ</SelectItem>
+                <SelectItem value="statement-combination">বক্তব্য-সমন্বয় (i, ii, iii)</SelectItem>
+              </SelectContent>
+            </Select>
+            <div className="ml-2 flex items-center gap-2" title="যথেষ্ট জায়গা থাকলেই অপশনগুলো এক লাইনে থাকবে">
+              <Switch
+                id={`mcq-options-inline-${target.id}`}
+                checked={target.optionsInline ?? false}
+                onCheckedChange={(checked) => updateMcqOptionsInline(question.id, subQuestionId, checked)}
+              />
+              <Label htmlFor={`mcq-options-inline-${target.id}`} className="cursor-pointer whitespace-nowrap text-sm">
+                এক লাইনে অপশন
+              </Label>
+            </div>
+          </div>
+
+          {target.mcqOptionType === 'statement-combination' && (
+            <div className="space-y-2">
+              <p className="text-xs font-medium text-slate-400">তিনটি বক্তব্য</p>
+              {MCQ_STATEMENT_LABELS.map((label, index) => (
+                <div key={label} className="flex items-center gap-2">
+                  <span className="w-8 shrink-0 text-right font-medium">{label}.</span>
+                  <Input
+                    data-composition-field
+                    value={target.mcqStatements?.[index] ?? ''}
+                    placeholder={`${label}. বক্তব্য লিখুন`}
+                    onChange={(event) => updateMcqStatement(question.id, subQuestionId, index, event.target.value)}
+                    className="bg-white dark:bg-slate-800"
+                  />
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="space-y-2 group/sub">
+            <p className="text-xs font-medium text-slate-400">বিকল্প</p>
+            <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+              {target.options?.map((option, optionIndex) => (
+                <div key={option.id} className="flex items-center gap-2">
+                  <span className="font-semibold">{getNumbering('bangla-alpha', optionIndex)})</span>
+                  <Input
+                    data-option-id={option.id}
+                    data-composition-field
+                    value={option.text}
+                    onInput={(event) =>
+                      handleOptionChange(
+                        question.id,
+                        option.id,
+                        (event.target as HTMLInputElement).value,
+                        subQuestionId
+                      )
+                    }
+                    onFocus={(event) =>
+                      handleFocus(
+                        event,
+                        subQuestionId
+                          ? `option-${question.id}-${subQuestionId}-${option.id}`
+                          : `option-${question.id}-${option.id}`
+                      )
+                    }
+                    className="bg-white dark:bg-slate-800"
+                  />
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 shrink-0 text-destructive opacity-0 group-hover/sub:opacity-100"
+                    onClick={() => removeOption(question.id, option.id, subQuestionId)}
+                    aria-label="অপশন মুছুন"
+                  >
+                    <Trash2 className="size-4" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+            <Button variant="outline" size="sm" onClick={() => addOption(question.id, subQuestionId)}>
+              <Plus className="mr-2 size-4" /> অপশন যোগ করুন
+            </Button>
+          </div>
+        </div>
       );
 
     switch (question.type) {
@@ -1949,8 +2366,8 @@ case 'fill-in-the-blanks':
                 }));
             };
             return (
-                <Card key={question.id} className="group relative p-4 space-y-3 bg-slate-50 dark:bg-slate-900">
-                    <QuestionActions index={index} />
+                <Card key={question.id} data-question-id={question.id} onFocusCapture={() => setActiveQuestionId(question.id)} onClick={() => setActiveQuestionId(question.id)} className={cn('group relative space-y-3 rounded-xl border p-4 shadow-none transition-all duration-150', activeQuestionId === question.id ? 'border-teal-400/40 bg-slate-900 ring-1 ring-teal-400/25' : 'border-slate-800 bg-slate-900/60 hover:border-slate-700')}>
+                    {questionActions(index)}
                     <div className="flex items-center justify-between gap-2 pr-20">
                         <Label className="font-bold">ছবি{images.length > 1 ? ` (${images.length}টি)` : ''}</Label>
                         <div className="flex items-center gap-2">
@@ -2071,27 +2488,7 @@ case 'fill-in-the-blanks':
             if (question.subQuestions && question.subQuestions.length > 0) {
               return questionCard(subQuestionRenderer('mcq'));
             }
-            return questionCard(
-              <div className="pl-8 space-y-2 group/sub">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                  {question.options?.map((opt, optIndex) => (
-                    <div key={opt.id} className="flex items-center gap-2">
-                      <span className="font-semibold">{getNumbering('bangla-alpha', optIndex)})</span>
-                      <Input
-                        value={opt.text}
-                        onInput={(e) => handleOptionChange(question.id, opt.id, (e.target as HTMLInputElement).value)}
-                        onFocus={(e) => handleFocus(e, `option-${question.id}-${opt.id}`)}
-                        className="bg-white dark:bg-slate-800"
-                      />
-                      <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive shrink-0 opacity-0 group-hover/sub:opacity-100" onClick={() => removeOption(question.id, opt.id)}>
-                        <Trash2 className="size-4" />
-                      </Button>
-                    </div>
-                  ))}
-                </div>
-                <Button variant="outline" size="sm" onClick={() => addOption(question.id)}><Plus className="mr-2 size-4" /> Add Option</Button>
-              </div>
-            );
+            return questionCard(mcqOptionEditor(question));
         case 'text-box':
             return questionCard(null);
         case 'table':
@@ -2108,8 +2505,6 @@ case 'fill-in-the-blanks':
     let cancelled = false;
     const debounceTimer = setTimeout(() => {
       // mm -> px (96dpi)
-      const mmToPx = (mm: number) => mm * 3.7795275591;
-
       // choose the selector that identifies each question block in the rendered PaperPage
       const QUESTION_SELECTOR = '[data-question-id]';
 
@@ -2252,7 +2647,7 @@ case 'fill-in-the-blanks':
             const questionObj = paper.questions.find(q => q.id === qId);
             if (!questionObj) continue;
 
-            const mainContentEl = questionEl.querySelector<HTMLElement>('.question-content');
+            const mainStemEl = questionEl.querySelector<HTMLElement>('[data-question-stem]');
             const subQuestionEls = Array.from(questionEl.querySelectorAll<HTMLElement>('.subquestion-item'));
             const tableEl = questionEl.querySelector<HTMLElement>('[data-table-element]');
             const tableRowEls = tableEl ? Array.from(tableEl.querySelectorAll<HTMLElement>('[data-table-row]')) : [];
@@ -2283,7 +2678,7 @@ case 'fill-in-the-blanks':
             const ensureItem = (showMainContent: boolean) => {
                 let existing = currentPageContent.find(item => item.mainQuestion.id === qId);
                 if (!existing) {
-                    existing = { mainQuestion: questionObj, subParts: [], showMainContent, tableRows: null, optionRows: null, textBoxLines: null, formLines: null, stemLines: null, alternativeRange: null };
+                    existing = { mainQuestion: questionObj, subParts: [], showMainContent, tableRows: null, optionRows: null, textBoxLines: null, formLines: null, stemLines: null, alternativeRange: null, mcqStatementRows: null };
                     currentPageContent.push(existing);
                 }
                 return existing;
@@ -2315,6 +2710,7 @@ case 'fill-in-the-blanks':
             let stemItem: PageContent | null = null;
             const stemLineEls = Array.from(questionEl.querySelectorAll<HTMLElement>('[data-stem-line]'));
             const alternativeEls = Array.from(questionEl.querySelectorAll<HTMLElement>('[data-alternative-row]'));
+            const mainStatementRowEls = Array.from(questionEl.querySelectorAll<HTMLElement>('[data-main-mcq-statement-row]'));
 
             if (stemLineEls.length > 0) {
                 stemLineEls.forEach((lineEl, lineIndex) => {
@@ -2327,8 +2723,8 @@ case 'fill-in-the-blanks':
                     stemItem = item;
                     usedHeight += lineHeight;
                 });
-            } else if (mainContentEl) {
-                const mainHeight = outerHeight(mainContentEl);
+            } else if (mainStemEl) {
+                const mainHeight = outerHeight(mainStemEl);
                 trackWrapper();
                 flushIfOver(mainHeight);
                 const item = ensureItem(true);
@@ -2337,6 +2733,24 @@ case 'fill-in-the-blanks':
                 stemOnThisPage = true;
                 usedHeight += mainHeight;
             }
+
+            const statementContainer = mainStatementRowEls[0]?.parentElement;
+            const statementMarginTop = statementContainer
+                ? parseFloat(window.getComputedStyle(statementContainer).marginTop) || 0
+                : 0;
+            mainStatementRowEls.forEach((statementEl, statementIndex) => {
+                const pageItem = currentPageContent.find(item => item.mainQuestion.id === qId);
+                const hasStatementsOnPage = pageItem?.mcqStatementRows !== null && pageItem?.mcqStatementRows !== undefined;
+                let statementHeight = outerHeight(statementEl) + (hasStatementsOnPage ? 0 : statementMarginTop);
+                trackWrapper();
+                const movedToNewPage = flushIfOver(statementHeight);
+                if (movedToNewPage && hasStatementsOnPage) {
+                    statementHeight += statementMarginTop;
+                }
+                const item = ensureItem(stemOnThisPage);
+                item.mcqStatementRows = mergeRange(item.mcqStatementRows ?? null, statementIndex);
+                usedHeight += statementHeight;
+            });
 
             // Case 1a: Alternatives ("অথবা" lines) are separate fragments.
             alternativeEls.forEach((alternativeEl, alternativeIndex) => {
@@ -2475,7 +2889,7 @@ case 'fill-in-the-blanks':
             }
 
             // Case 3: No sub-questions, no main content, no table (e.g. section headers)
-            if (subQuestionEls.length === 0 && !mainContentEl && !tableEl) {
+            if (subQuestionEls.length === 0 && !mainStemEl && mainStatementRowEls.length === 0 && alternativeEls.length === 0 && !tableEl) {
                 const elHeight = outerHeight(questionEl);
                 flushIfOver(elHeight);
                 currentPageContent.push({ mainQuestion: questionObj, subParts: [], showMainContent: true, tableRows: null, optionRows: null });
@@ -2554,6 +2968,233 @@ case 'fill-in-the-blanks':
   };
 
 
+  // ── derived editor state ────────────────────────────────────────────────
+  const activeIndex = activeQuestionId ? paper.questions.findIndex(q => q.id === activeQuestionId) : -1;
+  const activeQuestion = activeIndex >= 0 ? paper.questions[activeIndex] : null;
+  const activeSubQuestion = activeQuestion?.subQuestions?.find(sq => focusedInput?.id.includes(sq.id)) ?? null;
+  const insertHint = activeQuestion
+    ? `${TYPE_LABEL[activeQuestion.type] ?? 'প্রশ্ন'} (${activeIndex + 1}) এর পরে`
+    : 'শেষে যুক্ত হবে';
+
+  const countable = paper.questions.filter(q => !['section-header', 'or', 'image', 'text-box'].includes(q.type));
+  const paperStats = {
+    count: countable.length,
+    marks: countable.reduce(
+      (sum, q) => sum + (q.marks ?? (q.subQuestions ?? []).reduce((s, sq) => s + (sq.marks ?? 0), 0)),
+      0
+    ),
+    total: paper.totalMarks,
+  };
+
+  const goToQuestion = (id: string) => {
+    if (isPreview) setPreviewMode(false);
+    setActiveQuestionId(id);
+    window.setTimeout(() => {
+      const el = document.querySelector<HTMLElement>(`[data-question-id="${id}"]`);
+      el?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      el?.querySelector<HTMLElement>('[contenteditable="true"], textarea, input:not([type="number"])')?.focus({ preventScroll: true });
+    }, 30);
+  };
+
+  tabNavigationRef.current = (target, direction) => {
+    if (isPreview) return false;
+
+    const fields = Array.from(document.querySelectorAll<HTMLElement>('[data-composition-field]'))
+      .filter(field => field.isConnected && field.getClientRects().length > 0);
+    if (!fields.length) return false;
+
+    const currentField = target.closest<HTMLElement>('[data-composition-field]');
+    const currentIndex = currentField ? fields.indexOf(currentField) : -1;
+    const nextField = currentIndex >= 0
+      ? fields[currentIndex + direction]
+      : direction === 1
+        ? fields.find(field => Boolean(target.compareDocumentPosition(field) & Node.DOCUMENT_POSITION_FOLLOWING))
+        : [...fields].reverse().find(field => Boolean(target.compareDocumentPosition(field) & Node.DOCUMENT_POSITION_PRECEDING));
+    if (!nextField) return false;
+    nextField.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    nextField.focus({ preventScroll: true });
+    window.requestAnimationFrame(() => {
+      if (!nextField.isConnected || document.activeElement !== nextField) return;
+      if (nextField instanceof HTMLInputElement || nextField instanceof HTMLTextAreaElement) {
+        nextField.select();
+      } else if (nextField.isContentEditable) {
+        const selection = window.getSelection();
+        const range = document.createRange();
+        const walker = document.createTreeWalker(nextField, NodeFilter.SHOW_TEXT);
+        const firstText = walker.nextNode();
+        let lastText = firstText;
+        let textNode = walker.nextNode();
+        while (textNode) {
+          lastText = textNode;
+          textNode = walker.nextNode();
+        }
+        if (firstText instanceof Text && lastText instanceof Text) {
+          range.setStart(firstText, 0);
+          range.setEnd(lastText, lastText.length);
+        } else {
+          range.selectNodeContents(nextField);
+        }
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+      }
+    });
+    return true;
+  };
+
+  const openCommandPalette = () => {
+    setPaletteMode('all');
+    setPaletteOpen(true);
+  };
+
+  const openInsertPalette = () => {
+    setPaletteMode('insert');
+    setPaletteOpen(true);
+  };
+
+  const insertImage = () => {
+    if (isPreview) setPreviewMode(false);
+    pickImage(null);
+  };
+
+  const insertFromShortcut = (type: Question['type']) => () => {
+    if (isPreview) setPreviewMode(false);
+    addQuestion(type);
+  };
+
+  const addSubQuestionForActive = () => {
+    if (!activeQuestion) {
+      toast({ title: 'আগে একটি প্রশ্ন নির্বাচন করুন', variant: 'destructive' });
+      return;
+    }
+    if (!['mcq', 'passage', 'creative', 'fill-in-the-blanks', 'short', 'essay'].includes(activeQuestion.type)) {
+      toast({ title: 'এই ধরনের প্রশ্নে উপপ্রশ্ন যোগ করা যায় না', variant: 'destructive' });
+      return;
+    }
+
+    const type: Question['type'] = activeQuestion.type === 'mcq'
+      ? 'mcq'
+      : activeQuestion.type === 'fill-in-the-blanks'
+        ? 'fill-in-the-blanks'
+        : activeQuestion.type === 'essay'
+          ? 'essay'
+          : 'short';
+    addSubQuestion(activeQuestion.id, type, activeSubQuestion?.id);
+  };
+
+  const addOptionForActive = () => {
+    if (!activeQuestion) {
+      toast({ title: 'আগে একটি MCQ নির্বাচন করুন', variant: 'destructive' });
+      return;
+    }
+    if (activeSubQuestion?.type === 'mcq') {
+      addOption(activeQuestion.id, activeSubQuestion.id);
+      return;
+    }
+    if (activeQuestion.type === 'mcq' && !activeQuestion.subQuestions?.length) {
+      addOption(activeQuestion.id);
+      return;
+    }
+    toast({ title: 'অপশন যোগ করতে একটি MCQ বা MCQ উপপ্রশ্ন নির্বাচন করুন', variant: 'destructive' });
+  };
+
+  // Latest handlers for the global key listener (see useEffect near the history code)
+  shortcutActionsRef.current = {
+    save: handleSave,
+    undo,
+    redo,
+    'redo-y': redo,
+    palette: () => {
+      setPaletteMode('all');
+      setPaletteOpen(open => !open);
+    },
+    'add-question-menu': openInsertPalette,
+    help: () => setHelpOpen(true),
+    'help-q': () => setHelpOpen(true),
+    download: () => window.dispatchEvent(new Event('editor:download')),
+    'insert-mcq': insertFromShortcut('mcq'),
+    'insert-short': insertFromShortcut('short'),
+    'insert-creative': insertFromShortcut('creative'),
+    'insert-passage': insertFromShortcut('passage'),
+    'insert-fill': insertFromShortcut('fill-in-the-blanks'),
+    'insert-essay': insertFromShortcut('essay'),
+    'insert-table': insertFromShortcut('table'),
+    'insert-section': insertFromShortcut('section-header'),
+    'insert-or': insertFromShortcut('or'),
+    'insert-textbox': insertFromShortcut('text-box'),
+    'insert-image': insertImage,
+    'add-sub-question': addSubQuestionForActive,
+    'add-sub-question-alt': addSubQuestionForActive,
+    'add-option': addOptionForActive,
+    duplicate: () => activeQuestion && duplicateQuestion(activeQuestion.id),
+    'move-up': () => moveActive('up'),
+    'move-down': () => moveActive('down'),
+    delete: () => activeQuestion && deleteWithUndo(activeQuestion.id),
+    preview: () => setPreviewMode(v => !v),
+    tools: () => setIsRightRailHidden(v => !v),
+    theme: toggleTheme,
+  };
+
+  const snippet = (q: Question) => {
+    const t = (q.content ?? '').replace(/\$|\\[a-zA-Z]+|\s+/g, ' ').trim();
+    return t.length > 38 ? `${t.slice(0, 38)}…` : t;
+  };
+  let navigationQuestionNumber = 0;
+  let navigationSectionNumber = 0;
+  const sectionNavigation = paper.questions.flatMap((question, index) => {
+    if (question.type === 'or' || question.type === 'image') return [];
+    if (question.type === 'section-header') {
+      navigationSectionNumber += 1;
+      return [{ question, index, number: String(navigationSectionNumber), isSection: true }];
+    }
+    navigationQuestionNumber += 1;
+    return [{ question, index, number: String(navigationQuestionNumber), isSection: false }];
+  });
+
+  const insertPaletteCommands: PaletteCommand[] = [
+    ...INSERT_ITEMS.map(item => ({
+      id: `ins-${item.type}`,
+      group: 'প্রশ্ন যোগ করুন',
+      label: `${item.hint} যোগ করুন`,
+      icon: item.icon,
+      shortcutId: item.shortcutId,
+      keywords: `${item.label} ${item.type} add insert new নতুন`,
+      run: insertFromShortcut(item.type),
+    })),
+    { id: 'ins-image', group: 'প্রশ্ন যোগ করুন', label: 'ছবি যোগ করুন', icon: ImageIcon, shortcutId: 'insert-image', keywords: 'image photo upload', run: insertImage },
+  ];
+
+  const paletteCommands: PaletteCommand[] = [
+    ...insertPaletteCommands,
+    ...(activeQuestion
+      ? [
+          { id: 'q-dup', group: 'বর্তমান প্রশ্ন', label: 'কপি করুন', icon: Copy, shortcutId: 'duplicate', keywords: 'duplicate copy', run: () => duplicateQuestion(activeQuestion.id) },
+          { id: 'q-up', group: 'বর্তমান প্রশ্ন', label: 'উপরে সরান', icon: ArrowUp, shortcutId: 'move-up', keywords: 'move up', run: () => moveActive('up') },
+          { id: 'q-down', group: 'বর্তমান প্রশ্ন', label: 'নিচে সরান', icon: ArrowDown, shortcutId: 'move-down', keywords: 'move down', run: () => moveActive('down') },
+          { id: 'q-del', group: 'বর্তমান প্রশ্ন', label: 'মুছুন', icon: Trash2, shortcutId: 'delete', keywords: 'delete remove', run: () => deleteWithUndo(activeQuestion.id) },
+        ]
+      : []),
+    { id: 'a-save', group: 'অ্যাকশন', label: 'এখনই সংরক্ষণ করুন', icon: Save, shortcutId: 'save', keywords: 'save', run: handleSave },
+    { id: 'a-undo', group: 'অ্যাকশন', label: 'পূর্বাবস্থায় ফিরুন', icon: Undo2, shortcutId: 'undo', keywords: 'undo', run: undo },
+    { id: 'a-redo', group: 'অ্যাকশন', label: 'আবার করুন', icon: Redo2, shortcutId: 'redo', keywords: 'redo', run: redo },
+    { id: 'a-preview', group: 'অ্যাকশন', label: isPreview ? 'সম্পাদনায় ফিরুন' : 'প্রিভিউ দেখুন', icon: Eye, shortcutId: 'preview', keywords: 'preview edit', run: () => setPreviewMode(v => !v) },
+    { id: 'a-download', group: 'অ্যাকশন', label: 'PDF ডাউনলোড করুন', icon: Download, shortcutId: 'download', keywords: 'download pdf export print', run: () => window.dispatchEvent(new Event('editor:download')) },
+    { id: 'a-tools', group: 'অ্যাকশন', label: isRightRailHidden ? 'টুল প্যানেল দেখান' : 'টুল প্যানেল লুকান', icon: PanelRight, shortcutId: 'tools', keywords: 'panel sidebar tools', run: () => setIsRightRailHidden(v => !v) },
+    { id: 'a-theme', group: 'অ্যাকশন', label: theme === 'light' ? 'ডার্ক মোডে যান' : 'লাইট মোডে যান', icon: theme === 'light' ? Moon : Sun, shortcutId: 'theme', keywords: 'theme light dark mode appearance color scheme', run: toggleTheme },
+    { id: 'a-ai', group: 'অ্যাকশন', label: 'AI দিয়ে প্রশ্নপত্র তৈরি', icon: Sparkles, keywords: 'ai generate suggest', run: () => { void persistPaper(paper); router.push(`/ai/suggest?project=${projectId}`); } },
+    { id: 'a-ocr', group: 'অ্যাকশন', label: 'ছবি থেকে প্রশ্ন ইম্পোর্ট (OCR)', icon: ScanText, keywords: 'ocr import image scan', run: () => { void persistPaper(paper); router.push(`/editor/image?project=${projectId}`); } },
+    { id: 'a-help', group: 'অ্যাকশন', label: 'কীবোর্ড শর্টকাট তালিকা', icon: Keyboard, shortcutId: 'help', keywords: 'keyboard shortcuts help', run: () => setHelpOpen(true) },
+    ...paper.questions
+      .map((q, i) => ({ q, i }))
+      .filter(({ q }) => q.type !== 'or')
+      .map(({ q, i }) => ({
+        id: `go-${q.id}`,
+        group: 'প্রশ্নে যান',
+        label: `${i + 1}. ${TYPE_LABEL[q.type] ?? ''}${snippet(q) ? ` — ${snippet(q)}` : ''}`,
+        keywords: `${i + 1} go jump`,
+        run: () => goToQuestion(q.id),
+      })),
+  ];
+
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-background">
       <EditorHeader
@@ -2569,15 +3210,80 @@ case 'fill-in-the-blanks':
         bookletPages={bookletPages}
         setBookletPages={setBookletPages}
         isPreview={isPreview}
-        setIsPreview={setIsPreview}
+        setIsPreview={setPreviewMode}
+        richTextSelection={richTextSelection}
+        onRichTextBold={() => activeRichTextareaRef.current?.applyBold()}
+        onRichTextUnderline={() => activeRichTextareaRef.current?.applyUnderline()}
+        onRichTextAlignment={(align) => activeRichTextareaRef.current?.applyAlignment(align)}
+        onRichTextFontSize={(fontSize) => activeRichTextareaRef.current?.applyFontSize(fontSize)}
         isRightRailHidden={isRightRailHidden}
         setIsRightRailHidden={setIsRightRailHidden}
+        canUndo={canUndo}
+        canRedo={canRedo}
+        onUndo={undo}
+        onRedo={redo}
+        saveStatus={saveStatus}
+        onOpenPalette={openCommandPalette}
+        onOpenShortcuts={() => setHelpOpen(true)}
+        theme={theme}
+        onToggleTheme={toggleTheme}
       />
       <div className="flex min-h-0 flex-1 overflow-hidden">
-        <main className="min-h-0 flex-1 overflow-y-auto contain-layout app-scrollbar bg-slate-200 dark:bg-gray-800 p-4">
+        {!isPreview && paper.questions.length > 0 && (
+          <aside className="hidden w-56 shrink-0 flex-col border-r border-white/[0.06] bg-slate-950/60 xl:flex">
+            <div className="border-b border-white/[0.06] px-4 py-3">
+              <p className="text-xs font-semibold text-slate-200">বিভাগ ও প্রশ্ন</p>
+              <p className="mt-1 text-[10px] text-slate-500">নেভিগেট করতে চাপ দিন</p>
+            </div>
+            <nav aria-label="বিভাগ ও প্রশ্নে যান" className="app-scrollbar min-h-0 flex-1 space-y-1 overflow-y-auto p-2">
+              {sectionNavigation.map(({ question, index, number, isSection }) => (
+                <button
+                  key={question.id}
+                  type="button"
+                  onClick={() => goToQuestion(question.id)}
+                  aria-current={activeQuestionId === question.id ? 'location' : undefined}
+                  title={question.content || TYPE_LABEL[question.type] || 'প্রশ্ন'}
+                  className={cn(
+                    'flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-xs transition-colors',
+                    activeQuestionId === question.id
+                      ? 'bg-teal-400/10 text-teal-300'
+                      : 'text-slate-400 hover:bg-white/[0.06] hover:text-slate-200',
+                    isSection && 'mt-2 border-t border-white/[0.06] pt-3 font-semibold text-slate-200'
+                  )}
+                >
+                  <span className={cn(
+                    'flex size-6 shrink-0 items-center justify-center rounded-md text-[10px] font-semibold tabular-nums',
+                    isSection ? 'bg-violet-400/10 text-violet-300' : 'bg-white/[0.05] text-slate-400'
+                  )}>
+                    {isSection ? `§${number}` : number}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate">
+                    {isSection
+                      ? question.content || `বিভাগ ${number}`
+                      : `${TYPE_LABEL[question.type] ?? 'প্রশ্ন'}${snippet(question) ? ` · ${snippet(question)}` : ''}`}
+                  </span>
+                  <span className="sr-only">আইটেম {index + 1}</span>
+                </button>
+              ))}
+            </nav>
+          </aside>
+        )}
+        <main
+          ref={editorScrollRef}
+          onScroll={(event) => {
+            if (!isPreview) savedEditorScrollTopRef.current = event.currentTarget.scrollTop;
+          }}
+          className="min-h-0 min-w-0 flex-1 overflow-y-auto contain-layout app-scrollbar bg-slate-950 px-4 py-6 sm:px-8"
+        >
               {isPreview ? (
                 <div
                   ref={boardViewportRef}
+                  onScroll={(event) => {
+                    savedPreviewScrollRef.current = {
+                      left: event.currentTarget.scrollLeft,
+                      top: event.currentTarget.scrollTop,
+                    };
+                  }}
                   className={`app-scrollbar-light min-h-[calc(100vh-140px)] w-full overflow-auto rounded-lg bg-gray-100 p-3 shadow-lg ${isSpaceHeld ? 'cursor-grab' : ''}`}
                   onPointerDown={handleBoardPointerDown}
                   onPointerMove={handleBoardPointerMove}
@@ -2599,8 +3305,8 @@ case 'fill-in-the-blanks':
                   </div>
                 </div>
               ) : (
-              <div className="space-y-4">
-                    <div className="bg-white dark:bg-slate-800/50 p-6 space-y-6 shadow-lg rounded-lg">
+              <div className="mx-auto w-full max-w-3xl space-y-4 pb-28">
+                    <div className="space-y-6 rounded-2xl border border-slate-800 bg-slate-900/50 p-6">
                       <div className="flex items-center justify-between border-b border-slate-200 pb-3 dark:border-slate-700">
                         <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">
                           {isEditingHeaderLayout ? 'হেডার লেআউট সম্পাদনা' : 'প্রশ্নপত্রের তথ্য'}
@@ -2693,15 +3399,34 @@ case 'fill-in-the-blanks':
                   </div>
 
                   {paper.questions.length === 0 ? (
-                  <div className="flex flex-grow items-center justify-center text-center text-muted-foreground rounded-lg border-2 border-dashed border-slate-300 dark:border-slate-700">
-                      <div>
-                        <p className="font-semibold text-foreground">Your paper is empty</p>
-                        <p className="text-sm">Add questions from the panel on the right.</p>
+                  <div className="flex flex-col items-center rounded-2xl border border-dashed border-slate-700 px-6 py-14 text-center">
+                      <p className="text-base font-semibold text-slate-100">প্রশ্নপত্র এখনো ফাঁকা</p>
+                      <p className="mt-1 text-sm text-slate-400">একটি ধরন বেছে শুরু করুন — অথবা <kbd className="rounded border border-white/10 bg-white/[0.06] px-1.5 py-0.5 text-[11px]">Ctrl</kbd> <kbd className="rounded border border-white/10 bg-white/[0.06] px-1.5 py-0.5 text-[11px]">K</kbd> চেপে খুঁজুন</p>
+                      <div className="mt-6 flex flex-wrap justify-center gap-2">
+                        {INSERT_ITEMS.filter(i => ['section-header', 'mcq', 'short', 'creative'].includes(i.type)).map(i => (
+                          <Button key={i.type} variant="outline" onClick={() => addQuestion(i.type)} className="h-9 gap-2 rounded-lg border-white/10 bg-white/[0.04] text-[13px] text-slate-200 hover:border-teal-400/40 hover:bg-white/[0.08] hover:text-white">
+                            <i.icon className="size-4 text-teal-300" /> {i.hint}
+                          </Button>
+                        ))}
                       </div>
                   </div>
                   ) : (
-                  <div className="space-y-4">
-                      {paper.questions.map((q, index) => renderQuestion(q, index))}
+                  <div className="space-y-3">
+                      {paper.questions.map((q, index) => (
+                        <Fragment key={q.id}>
+                          {renderQuestion(q, index)}
+                          <div className="group/ins relative flex h-3 items-center justify-center">
+                            <span className="h-px w-full bg-gradient-to-r from-transparent via-transparent to-transparent transition-colors group-hover/ins:via-teal-400/30" />
+                            <button
+                              type="button"
+                              onClick={() => { setActiveQuestionId(q.id); openInsertPalette(); }}
+                              className="absolute z-[1] flex h-6 items-center gap-1 rounded-full border border-white/10 bg-slate-900 px-2.5 text-[11px] text-slate-400 opacity-0 shadow-lg transition-all hover:border-teal-400/50 hover:text-teal-300 focus-visible:opacity-100 group-hover/ins:opacity-100"
+                            >
+                              <Plus className="size-3" /> এখানে যোগ করুন
+                            </button>
+                          </div>
+                        </Fragment>
+                      ))}
                   </div>
                   )}
               </div>
@@ -2712,91 +3437,53 @@ case 'fill-in-the-blanks':
             The scroll container is a plain block wrapper: a flex scroll container
             ignores mouse-wheel scrolling in Chromium. */}
         {!isRightRailHidden && (
-        <aside className="relative w-[400px] min-h-0 flex-shrink-0 flex flex-col contain-layout bg-slate-800">
-         <div className="min-h-0 flex-1 overflow-y-auto app-scrollbar">
-          <div className="space-y-6 p-4 pt-6">
-            {/* Add Questions (collapsible so the math panel stays reachable) */}
-            <Card className="bg-slate-900 border-slate-700 overflow-hidden">
-              <button
-                onClick={() => setShowAddQuestions((v) => !v)}
-                className="w-full flex items-center justify-between px-4 py-3 hover:bg-slate-800/60 transition-colors"
-              >
-                <span className="text-white font-semibold">প্রশ্ন যোগ করুন</span>
-                <span className="flex items-center gap-2">
-                  {paper && paper.questions.length > 0 && (
-                    <span className="rounded-full bg-slate-700/80 px-1.5 py-px text-[11px] text-slate-300">
-                      {paper.questions.length}
-                    </span>
-                  )}
-                  {showAddQuestions ? (
-                    <ChevronUp className="h-4 w-4 text-slate-400" />
-                  ) : (
-                    <ChevronDown className="h-4 w-4 text-slate-400" />
-                  )}
-                </span>
-              </button>
-              {showAddQuestions && (
-              <CardContent className="flex flex-col gap-2 px-4 pb-4">
-                <Button variant="outline" onClick={() => addQuestion('section-header')} className="bg-slate-800 border-slate-600 text-white hover:bg-slate-700 hover:text-white"><Minus className="mr-2 size-4" /> বিভাগ যোগ করুন</Button>
-                <Button variant="outline" onClick={() => addQuestion('creative')} className="bg-slate-800 border-slate-600 text-white hover:bg-slate-700 hover:text-white"><BookMarked className="mr-2 size-4" /> সৃজনশীল প্রশ্ন</Button>
-                <Button variant="outline" onClick={() => addQuestion('passage')} className="bg-slate-800 border-slate-600 text-white hover:bg-slate-700 hover:text-white"><Pilcrow className="mr-2 size-4" /> অনুচ্ছেদ</Button>
-                <Button variant="outline" onClick={() => addQuestion('mcq')} className="bg-slate-800 border-slate-600 text-white hover:bg-slate-700 hover:text-white"><ListOrdered className="mr-2 size-4" /> MCQ</Button>
-                <Button variant="outline" onClick={() => addQuestion('short')} className="bg-slate-800 border-slate-600 text-white hover:bg-slate-700 hover:text-white"><Type className="mr-2 size-4" /> সংক্ষিপ্ত প্রশ্ন</Button>
-                <Button variant="outline" onClick={() => addQuestion('fill-in-the-blanks')} className="bg-slate-800 border-slate-600 text-white hover:bg-slate-700 hover:text-white"><Type className="mr-2 size-4" /> শূন্যস্থান পূরণ</Button>
-                <Button variant="outline" onClick={() => addQuestion('essay')} className="bg-slate-800 border-slate-600 text-white hover:bg-slate-700 hover:text-white"><Pilcrow className="mr-2 size-4" /> রচনামূলক প্রশ্ন</Button>
-                <Button variant="outline" onClick={() => addQuestion('table')} className="bg-slate-800 border-slate-600 text-white hover:bg-slate-700 hover:text-white"><TableIcon className="mr-2 size-4" /> সারণী</Button>
-                <Button variant="outline" onClick={() => addQuestion('text-box')} className="bg-slate-800 border-slate-600 text-white hover:bg-slate-700 hover:text-white"><Square className="mr-2 size-4" /> একটি টেক্সট বক্স</Button>
-                <Link href={`/editor/image?project=${projectId}`} passHref onClick={() => { if (paper) void persistPaper(paper); }}>
-                    <Button variant="outline" className="w-full border-primary text-primary hover:bg-primary/10"><ImageIcon className="mr-2 size-4" /> ছবি থেকে ইম্পোর্ট</Button>
-                </Link>
-                  <Link href={`/ai/suggest?project=${projectId}`} passHref onClick={() => { if (paper) void persistPaper(paper); }}>
-                  <Button variant="outline" className="w-full border-purple-500 text-purple-500 hover:bg-purple-500/10">
-                    <Sparkles className="mr-2 size-4" />
-                    AI দিয়ে তৈরি করুন
-                  </Button>
-                </Link>
-              </CardContent>
-              )}
-            </Card>
-
-            {/* Add images into the question paper */}
-            <Card className="bg-slate-900 border-slate-700 overflow-hidden">
-              <div className="flex items-center justify-between px-4 py-3">
-                <span className="text-white font-semibold">ছবি যোগ করুন</span>
-                <ImageIcon className="h-4 w-4 text-slate-400" />
-              </div>
-              <CardContent className="px-4 pb-4">
-                <input
-                  ref={imageFileInputRef}
-                  type="file"
-                  accept="image/*"
-                  multiple
-                  className="hidden"
-                  onChange={(e) => {
-                    void handleImageFiles(e.target.files);
-                    e.target.value = '';
-                  }}
-                />
-                <Button
-                  variant="outline"
-                  className="w-full bg-slate-800 border-slate-600 text-white hover:bg-slate-700 hover:text-white"
-                  onClick={() => pickImage(null)}
-                >
-                  <ImageIcon className="mr-2 size-4" /> ছবি আপলোড করুন
-                </Button>
-                <p className="mt-2 text-xs text-slate-400">
-                  PNG/JPG ছবি নিচের তালিকায় যুক্ত হবে। এরপর উপ/নিচ করে ছবিকে প্রশ্নের মাঝে সাজাতে পারবেন এবং মেইন এডিটরে প্রস্থ ও অবস্থান ঠিক করতে পারবেন।
-                </p>
-              </CardContent>
-            </Card>
-
-            <TallyMarks onInsert={handleInsertExpression} targetLabel={getFocusedFieldLabel()} />
-
-            <MathExpressions onInsert={handleInsertExpression} targetLabel={getFocusedFieldLabel()} />
+        <aside className="relative flex min-h-0 w-[360px] flex-shrink-0 flex-col border-l border-white/[0.06] bg-slate-950/60 contain-layout">
+          {/* plain block scroll wrapper: a flex scroll container ignores mouse-wheel scrolling in Chromium */}
+          <div className="min-h-0 flex-1 overflow-y-auto app-scrollbar">
+            <input
+              ref={imageFileInputRef}
+              type="file"
+              accept="image/*"
+              multiple
+              className="hidden"
+              onChange={(e) => {
+                void handleImageFiles(e.target.files);
+                e.target.value = '';
+              }}
+            />
+            <InsertPanel
+              onInsert={(type) => { if (isPreview) setPreviewMode(false); addQuestion(type); }}
+              onPickImage={() => pickImage(null)}
+              onOpenShortcuts={() => setHelpOpen(true)}
+              aiHref={`/ai/suggest?project=${projectId}`}
+              importHref={`/editor/image?project=${projectId}`}
+              onNavigateAway={() => { if (paper) void persistPaper(paper); }}
+              insertHint={insertHint}
+              stats={paperStats}
+            />
+            <div className="space-y-4 px-4 pb-8">
+              <TallyMarks onInsert={handleInsertExpression} targetLabel={getFocusedFieldLabel()} />
+              <MathExpressions onInsert={handleInsertExpression} targetLabel={getFocusedFieldLabel()} />
+            </div>
           </div>
-         </div>
         </aside>
         )}
+
+        <CommandPalette
+          open={paletteOpen}
+          onOpenChange={setPaletteOpen}
+          commands={paletteMode === 'insert' ? insertPaletteCommands : paletteCommands}
+          title={paletteMode === 'insert' ? 'যোগ করুন' : undefined}
+          tabSelect={paletteMode === 'insert'}
+          contextHint={
+            paletteMode === 'insert'
+              ? `“${insertHint}” যুক্ত হবে`
+              : activeQuestion
+                ? `নতুন প্রশ্ন “${insertHint}” যুক্ত হবে`
+                : null
+          }
+        />
+        <ShortcutsDialog open={helpOpen} onOpenChange={setHelpOpen} />
 
         {/* Hidden div for calculations */}
         <div className="absolute top-0 left-[-9999px] opacity-0 pointer-events-none" style={{ width: `${settings.width}px` }}>

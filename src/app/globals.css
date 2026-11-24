@@ -70,6 +70,7 @@
   }
   body {
     @apply bg-background text-foreground;
+    font-family: 'SolaimanLipi Bengali', ui-sans-serif, system-ui, sans-serif;
   }
 }
 
@@ -162,6 +163,15 @@
 }
 
 @font-face {
+  font-family: 'SolaimanLipi Bengali';
+  src: url('/fonts/SolaimanLipi.ttf') format('truetype');
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0980-09FF;
+}
+
+@font-face {
   font-family: 'Noto Serif Bengali';
   src: url('/fonts/NotoSerifBengali-Regular.ttf') format('truetype');
   font-weight: 400;
@@ -194,11 +204,11 @@
 }
 
 .rich-editor {
-  font-family: 'TallyMarks', 'PT Sans', sans-serif;
+  font-family: 'TallyMarks', 'SolaimanLipi Bengali', 'PT Sans', sans-serif;
 }
 
 .tally-marks-font {
-  font-family: 'TallyMarks', 'PT Sans', sans-serif;
+  font-family: 'TallyMarks', 'SolaimanLipi Bengali', 'PT Sans', sans-serif;
 }
 
 /* Bengali glyphs (matra, conjuncts, descenders) break an ink-skipping underline

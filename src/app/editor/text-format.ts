@@ -4,6 +4,7 @@ export interface RichTextRun {
   text: string;
   bold?: boolean;
   underline?: boolean;
+  fontSize?: number;
 }
 
 export interface RichTextLine {
@@ -53,11 +54,15 @@ const compactRuns = (runs: RichTextRun[]): RichTextRun[] => {
     const previous = compacted[compacted.length - 1];
     const bold = run.bold === true;
     const underline = run.underline === true;
+    const fontSize = typeof run.fontSize === 'number' && Number.isFinite(run.fontSize) && run.fontSize > 0
+      ? Math.round(run.fontSize * 10) / 10
+      : undefined;
 
     if (
       previous &&
       (previous.bold === true) === bold &&
-      (previous.underline === true) === underline
+      (previous.underline === true) === underline &&
+      previous.fontSize === fontSize
     ) {
       previous.text += run.text;
       return;
@@ -67,6 +72,7 @@ const compactRuns = (runs: RichTextRun[]): RichTextRun[] => {
       text: run.text,
       ...(bold ? { bold: true } : {}),
       ...(underline ? { underline: true } : {}),
+      ...(fontSize ? { fontSize } : {}),
     });
   });
 
@@ -136,6 +142,7 @@ export const stripUniformBoldFlags = (document: RichTextDocument): RichTextDocum
       runs: line.runs.map((run) => ({
         text: run.text,
         ...(run.underline ? { underline: true } : {}),
+        ...(run.fontSize ? { fontSize: run.fontSize } : {}),
       })),
     })),
   };

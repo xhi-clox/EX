@@ -1,7 +1,7 @@
 import React from 'react';
 import katex from 'katex';
 import type { Paper, Question, NumberingFormat, MainNumberingFormat, MarksFormat } from './page';
-import EditableTable from './EditableTable';
+import EditableTable, { MIN_TABLE_COL, TABLE_GUTTER_WIDTH } from './EditableTable';
 import EditableImage from './EditableImage';
 import { imageFilterCss, imageGroupStyle, imageItemStyle, getQuestionImages } from './image-style';
 import { headerFieldText, subjectLabel, gradeLabel, type HeaderRow } from './header-template';
@@ -68,6 +68,7 @@ export type PageContent = {
     showMainContent: boolean;
     tableRows: readonly [number, number] | null;  // built-in (hints/substitution) table rows to render on this page
     optionRows: readonly [number, number] | null; // main-level options grid rows to render on this page
+    mcqStatementRows?: readonly [number, number] | null;
     textBoxLines?: readonly [number, number] | null; // single text box lines to render on this page
     formLines?: readonly [number, number] | null;   // boxed form lines to render on this page
     stemLines?: readonly [number, number] | null;   // question stem lines to render on this page
@@ -220,6 +221,7 @@ const RichText = ({
               key={runIndex}
               style={{
                 fontWeight: run.bold ? 700 : undefined,
+                fontSize: run.fontSize ? `${run.fontSize}pt` : undefined,
                 textDecoration: run.underline ? 'underline' : undefined,
                 textDecorationSkipInk: run.underline ? 'none' : undefined,
                 textUnderlineOffset: run.underline ? '2px' : undefined,
@@ -309,7 +311,8 @@ const renderTableContent = (question: Question, rowRange: readonly [number, numb
     if (lastRow < firstRow) return null;
     const isBox = question.tableBorderMode === 'box';
     const tableStyle: React.CSSProperties = {
-        width: hasExplicit ? `${sumPx}px` : '100%',
+        width: '100%',
+        maxWidth: '100%',
         borderCollapse: 'collapse',
         tableLayout: 'fixed',
         ...(isBox ? { border: '1px solid #000' } : {}),
@@ -318,12 +321,16 @@ const renderTableContent = (question: Question, rowRange: readonly [number, numb
         ...(isBox ? { border: 'none' } : { border: '1px solid #000' }),
         padding: '4px 8px',
         verticalAlign: 'top',
+        overflowWrap: 'anywhere',
     };
     return (
         <table style={tableStyle}>
             <colgroup>
                 {widths.map((w, ci) => (
-                    <col key={ci} style={w > 0 ? { width: w } : undefined} />
+                    <col
+                        key={ci}
+                        style={w > 0 && hasExplicit ? { width: `${(w / sumPx) * 100}%` } : undefined}
+                    />
                 ))}
             </colgroup>
             <tbody>
@@ -348,33 +355,198 @@ const renderTableContent = (question: Question, rowRange: readonly [number, numb
     );
 };
 
-// Renders an options list as 2-per-row lines that are individually paginatable.
-// Row sub-sets keep their original letters (ক) খ) ...) so a grid continued on the
-// next page stays correctly numbered.
-const renderOptionsGrid = (options: { id: string; text: string }[], rowRange: readonly [number, number] | null = null) => {
-    const rowStart = rowRange ? rowRange[0] * 2 : 0;
-    const rowEnd = rowRange ? (rowRange[1] + 1) * 2 : options.length;
-    const rowGroups: Array<{ opt: { id: string; text: string }; index: number }>[] = [];
-    for (let i = rowStart; i < rowEnd; i += 2) {
-        const chunk = options.slice(i, i + 2).map((opt, j) => ({ opt, index: i + j }));
-        if (chunk.length > 0) rowGroups.push(chunk);
-    }
-    if (rowGroups.length === 0) return null;
-    return (
-        <div className="pl-6 mt-1">
-            {rowGroups.map((chunk, gi) => (
-                <div key={gi} className="option-row flex gap-x-8 mb-1" data-option-row={rowRange ? rowRange[0] + gi : gi}>
-                    {chunk.map(({ opt, index }) => (
-                        <p key={opt.id} className="flex-1">{getNumbering('bangla-alpha', index)}) <RichText content={opt.text} /></p>
-                    ))}
-                    {chunk.length === 1 && <span key="spacer" className="flex-1" aria-hidden />}
+type OptionsLayout = {
+    mode: 'measuring' | 'two-column' | 'single-line' | 'stacked';
+    leftColumnWidth: number;
+};
+
+const OptionsGrid = ({
+    options,
+    rowRange,
+    optionsInline,
+}: {
+    options: { id: string; text: string }[];
+    rowRange: readonly [number, number] | null;
+    optionsInline: boolean;
+}) => {
+    const layoutRef = React.useRef<HTMLDivElement>(null);
+    const measureRef = React.useRef<HTMLDivElement>(null);
+    const [layout, setLayout] = React.useState<OptionsLayout>({
+        mode: 'measuring',
+        leftColumnWidth: 0,
+    });
+
+    React.useLayoutEffect(() => {
+        const layoutElement = layoutRef.current;
+        const measureElement = measureRef.current;
+        if (!layoutElement || !measureElement) return;
+
+        const updateLayout = () => {
+            const availableWidth = layoutElement.getBoundingClientRect().width;
+            const optionWidths = Array.from(measureElement.children)
+                .map((element) => element.getBoundingClientRect().width);
+            if (optionWidths.length === 0) return;
+
+            const gap = parseFloat(window.getComputedStyle(measureElement).columnGap) || 0;
+            let nextLayout: OptionsLayout;
+
+            if (optionsInline) {
+                const requiredWidth = optionWidths.reduce((sum, width) => sum + width, 0) + gap * (optionWidths.length - 1);
+                nextLayout = {
+                    mode: requiredWidth <= availableWidth ? 'single-line' : 'stacked',
+                    leftColumnWidth: 0,
+                };
+            } else {
+                const leftWidth = Math.max(...optionWidths.filter((_, index) => index % 2 === 0));
+                const rightWidth = Math.max(...optionWidths.filter((_, index) => index % 2 === 1), 0);
+                const availableTrackWidth = availableWidth - gap;
+                const fitsTwoColumns = leftWidth + rightWidth <= availableTrackWidth;
+                const preferredLeftWidth = availableTrackWidth * 0.4;
+                nextLayout = fitsTwoColumns
+                    ? {
+                        mode: 'two-column',
+                        leftColumnWidth: Math.min(
+                            Math.max(preferredLeftWidth, leftWidth),
+                            availableTrackWidth - rightWidth
+                        ),
+                    }
+                    : { mode: 'stacked', leftColumnWidth: 0 };
+            }
+
+            setLayout((current) =>
+                current.mode === nextLayout.mode &&
+                Math.abs(current.leftColumnWidth - nextLayout.leftColumnWidth) < 0.5
+                    ? current
+                    : nextLayout
+            );
+        };
+
+        updateLayout();
+        if (typeof ResizeObserver === 'undefined') return;
+        const observer = new ResizeObserver(updateLayout);
+        observer.observe(layoutElement);
+        observer.observe(measureElement);
+        return () => observer.disconnect();
+    }, [options, optionsInline]);
+
+    if (rowRange && rowRange[1] < rowRange[0]) return null;
+
+    const renderOption = (index: number) => {
+        const option = options[index];
+        if (!option) return null;
+        return (
+            <p key={option.id} className="min-w-0">
+                {getNumbering('bangla-alpha', index)}) <RichText content={option.text} />
+            </p>
+        );
+    };
+
+    let rows: React.ReactNode = null;
+    if (layout.mode === 'single-line') {
+        if (!rowRange || (rowRange[0] <= 0 && rowRange[1] >= 0)) {
+            rows = (
+                <div className="option-row flex flex-nowrap gap-x-8 mb-1" data-option-row={0}>
+                    {options.map((_, index) => renderOption(index))}
                 </div>
-            ))}
+            );
+        }
+    } else if (layout.mode === 'two-column') {
+        const rowStart = rowRange ? rowRange[0] * 2 : 0;
+        const rowEnd = rowRange ? Math.min((rowRange[1] + 1) * 2, options.length) : options.length;
+        const rowGroups: Array<{ opt: { id: string; text: string }; index: number }>[] = [];
+        for (let i = rowStart; i < rowEnd; i += 2) {
+            const chunk = options.slice(i, i + 2).map((opt, j) => ({ opt, index: i + j }));
+            if (chunk.length > 0) rowGroups.push(chunk);
+        }
+        rows = rowGroups.map((chunk, groupIndex) => (
+            <div
+                key={groupIndex}
+                className="option-row grid gap-x-8 mb-1"
+                style={{ gridTemplateColumns: `${layout.leftColumnWidth}px minmax(0, 1fr)` }}
+                data-option-row={rowRange ? rowRange[0] + groupIndex : groupIndex}
+            >
+                {chunk.map(({ opt, index }) => (
+                    <p key={opt.id} className="min-w-0">
+                        {getNumbering('bangla-alpha', index)}) <RichText content={opt.text} />
+                    </p>
+                ))}
+            </div>
+        ));
+    } else if (layout.mode === 'stacked') {
+        const firstOption = rowRange ? rowRange[0] : 0;
+        const lastOption = rowRange ? Math.min(rowRange[1], options.length - 1) : options.length - 1;
+        rows = Array.from({ length: Math.max(0, lastOption - firstOption + 1) }, (_, rowIndex) => {
+            const optionIndex = firstOption + rowIndex;
+            return (
+                <div key={optionIndex} className="option-row mb-1" data-option-row={optionIndex}>
+                    {renderOption(optionIndex)}
+                </div>
+            );
+        });
+    }
+
+    return (
+        <div className="relative pl-6 mt-1">
+            <div ref={layoutRef} className="w-full">{rows}</div>
+            <div
+                ref={measureRef}
+                aria-hidden="true"
+                className="pointer-events-none absolute left-0 top-0 h-0 invisible overflow-hidden"
+                style={{ display: 'flex', width: 'max-content', columnGap: '2rem' }}
+            >
+                {options.map((option, index) => (
+                    <p
+                        key={option.id}
+                        style={{ display: 'inline-block', flex: 'none', width: 'max-content', maxWidth: 'none', margin: 0, whiteSpace: 'nowrap' }}
+                    >
+                        {getNumbering('bangla-alpha', index)}) <RichText content={option.text} />
+                    </p>
+                ))}
+            </div>
         </div>
     );
 };
 
-export const renderQuestionContent = (question: Question, questionIndex: number, allQuestions: Question[], showMainContent: boolean, subParts: SubPart[] = [], mainNumberingFormat: MainNumberingFormat = 'bangla-numeric', marksFormat: MarksFormat = 'bangla-numeric', tableEditCallbacks?: TableEditCallbacks | null, imageEditCallbacks?: ImageEditCallbacks | null, tableRows: readonly [number, number] | null = null, optionRows: readonly [number, number] | null = null, textBoxLines?: readonly [number, number] | null, formLines?: readonly [number, number] | null, stemLines?: readonly [number, number] | null, alternativeRange?: readonly [number, number] | null) => {
+const renderOptionsGrid = (
+    options: { id: string; text: string }[],
+    rowRange: readonly [number, number] | null = null,
+    optionsInline = false
+) => options.length > 0
+    ? <OptionsGrid options={options} rowRange={rowRange} optionsInline={optionsInline} />
+    : null;
+
+const renderMcqStatements = (
+  question: Question,
+  rowRange?: readonly [number, number] | null,
+  mainQuestion = false
+) => {
+  if (rowRange === null || question.mcqOptionType !== 'statement-combination') return null;
+  const statements = question.mcqStatements ?? [];
+  const start = rowRange?.[0] ?? 0;
+  const end = rowRange?.[1] ?? statements.length - 1;
+  const labels = ['i', 'ii', 'iii'];
+
+  return (
+    <div className="pl-6 mt-1">
+      {statements
+        .map((text, index) => ({ text, index }))
+        .filter(({ index }) => index >= start && index <= end)
+        .map(({ text, index }) => (
+          <p
+            key={`${question.id}-statement-${index}`}
+            className="mcq-statement-row"
+            data-main-mcq-statement-row={mainQuestion ? index : undefined}
+            style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.125rem', whiteSpace: 'pre-wrap' }}
+          >
+            <span style={{ flex: '0 0 2rem' }}>{labels[index] ?? `${index + 1}`}.</span>
+            <span style={{ flex: 1 }}><RichText content={text} /></span>
+          </p>
+        ))}
+    </div>
+  );
+};
+
+export const renderQuestionContent = (question: Question, questionIndex: number, allQuestions: Question[], showMainContent: boolean, subParts: SubPart[] = [], mainNumberingFormat: MainNumberingFormat = 'bangla-numeric', marksFormat: MarksFormat = 'bangla-numeric', tableEditCallbacks?: TableEditCallbacks | null, imageEditCallbacks?: ImageEditCallbacks | null, tableRows: readonly [number, number] | null = null, optionRows: readonly [number, number] | null = null, textBoxLines?: readonly [number, number] | null, formLines?: readonly [number, number] | null, stemLines?: readonly [number, number] | null, alternativeRange?: readonly [number, number] | null, mcqStatementRows?: readonly [number, number] | null, tableMaxWidth?: number) => {
     if (question.type === 'or') {
         return (
             <div key={question.id} className="text-center font-bold my-2 question-item" data-question-id={question.id}>
@@ -435,9 +607,13 @@ export const renderQuestionContent = (question: Question, questionIndex: number,
     // refer to a printed table). Only the শূন্যস্থান hints table can be hidden.
     const tableVisible = question.type === 'fill-in-the-blanks' ? question.showHints !== false : true;
     const tableShown = tableVisible && hasTable && (tableRows ? tableRows[0] <= tableRows[1] : showMainContent);
+    const tableMaxMarginLeft = tableMaxWidth === undefined
+        ? Number.POSITIVE_INFINITY
+        : Math.max(0, tableMaxWidth - TABLE_GUTTER_WIDTH - MIN_TABLE_COL);
+    const tableLeftMargin = Math.min(question.tableMarginLeft ?? 0, tableMaxMarginLeft);
     const subPartKey = subParts.map(p => `${p.sub.id}:${p.content ? 'c' : ''}${p.optionRows ? p.optionRows.join('-') : 'x'}`).join(',');
     const hasRichFormatting = question.contentDocument?.lines.some(
-      (line) => Boolean(line.align) || line.runs.some((run) => run.bold || run.underline)
+      (line) => Boolean(line.align) || line.runs.some((run) => run.bold || run.underline || run.fontSize)
     );
     const formBlock = hasRichFormatting ? null : parseFormBlock(question.content);
     const formBlockLines = formBlock
@@ -459,10 +635,10 @@ export const renderQuestionContent = (question: Question, questionIndex: number,
     const stemLineAttributes = (lineIndex: number) => ({ 'data-stem-line': lineIndex });
 
     return (
-      <div key={`${question.id}-${showMainContent}-${tableRows ? tableRows.join('-') : 'x'}-${optionRows ? optionRows.join('-') : 'x'}-${subPartKey}`} className="mb-2 question-item" data-question-id={question.id}>
-        {(stemLines !== null || alternativeRange !== null) && (
+      <div key={`${question.id}-${showMainContent}-${tableRows ? tableRows.join('-') : 'x'}-${optionRows ? optionRows.join('-') : 'x'}-${mcqStatementRows ? mcqStatementRows.join('-') : 'x'}-${subPartKey}`} className="mb-2 question-item" data-question-id={question.id}>
+        {(stemLines !== null || alternativeRange !== null || mcqStatementRows !== null) && (
             <div className="question-content">
-                {question.type === 'text-box' ? (
+                {stemLines !== null && (question.type === 'text-box' ? (
                     <div className="flex justify-between font-semibold" data-question-stem>
                         <p className="flex-1" style={{ textAlign: question.contentAlign ?? 'left' }}>
                             <RichText
@@ -504,7 +680,8 @@ export const renderQuestionContent = (question: Question, questionIndex: number,
                         </p>
                         {showMainContent ? marksNode : null}
                     </div>
-                )}
+                ))}
+                {renderMcqStatements(question, mcqStatementRows, true)}
                 {question.alternatives?.map((alternative, altIndex) => {
                     if (alternativeRange !== undefined && alternativeRange !== null && !(altIndex >= alternativeRange[0] && altIndex <= alternativeRange[1])) {
                         return null;
@@ -564,13 +741,14 @@ export const renderQuestionContent = (question: Question, questionIndex: number,
               borderMode={question.tableBorderMode ?? 'grid'}
               colWidths={question.tableColWidths}
               rowHeights={question.tableRowHeights}
-              tableMarginLeft={question.tableMarginLeft}
+              tableMarginLeft={tableLeftMargin}
+              maxWidth={tableMaxWidth}
               callbacks={tableEditCallbacks}
             >
               {renderTableContent(question, tableRows)}
             </EditableTable>
           ) : (
-            <div data-table-element style={{ marginTop: '0.5rem', marginLeft: question.tableMarginLeft ? `${question.tableMarginLeft}px` : undefined }}>
+            <div data-table-element style={{ marginTop: '0.5rem', marginLeft: tableLeftMargin ? `${tableLeftMargin}px` : undefined }}>
               {renderTableContent(question, tableRows)}
             </div>
           )
@@ -590,39 +768,42 @@ export const renderQuestionContent = (question: Question, questionIndex: number,
                        const num = sq.numberingLabel ?? getNumbering(mainQuestionObj?.numberingFormat, sqIndex);
                        const prefix = num ? `${num}) ` : '';
                        return (
-                         <div className="subquestion-content flex">
-                           {sq.type === 'text-box' ? (
-                             <div className="flex-1">
-                               <p style={{ textAlign: sq.contentAlign ?? 'left', whiteSpace: 'pre-wrap' }}>{prefix}</p>
-                               <div className="border border-black px-3 py-2 mt-1">
+                         <div className="subquestion-content">
+                           <div className="flex">
+                             {sq.type === 'text-box' ? (
+                               <div className="flex-1">
+                                 <p style={{ textAlign: sq.contentAlign ?? 'left', whiteSpace: 'pre-wrap' }}>{prefix}</p>
+                                 <div className="border border-black px-3 py-2 mt-1">
+                                   <RichText
+                                     content={sq.content}
+                                     richDocument={sq.contentDocument}
+                                     align={sq.contentAlign ?? 'left'}
+                                   />
+                                 </div>
+                               </div>
+                             ) : (
+                               <p className="flex-1" style={{ textAlign: sq.contentAlign ?? 'left', whiteSpace: 'pre-wrap' }}>
                                  <RichText
                                    content={sq.content}
                                    richDocument={sq.contentDocument}
                                    align={sq.contentAlign ?? 'left'}
+                                   prefix={prefix}
                                  />
-                               </div>
-                             </div>
-                           ) : (
-                             <p className="flex-1" style={{ textAlign: sq.contentAlign ?? 'left', whiteSpace: 'pre-wrap' }}>
-                               <RichText
-                                 content={sq.content}
-                                 richDocument={sq.contentDocument}
-                                 align={sq.contentAlign ?? 'left'}
-                                 prefix={prefix}
-                               />
-                             </p>
-                           )}
+                               </p>
+                             )}
+                           </div>
+                           {renderMcqStatements(sq)}
                          </div>
                        );
                     })()}
-                   {sq.options && sq.options.length > 0 && renderOptionsGrid(sq.options, p.optionRows)}
+                   {sq.options && sq.options.length > 0 && renderOptionsGrid(sq.options, p.optionRows, sq.optionsInline)}
                  </div>
                );
             })}
           </div>
         )}
   
-        {question.type !== 'mcq' && question.options && question.options.length > 0 && (showMainContent || (!!optionRows && optionRows[0] <= optionRows[1])) && renderOptionsGrid(question.options, optionRows)}
+        {(question.type !== 'mcq' || !question.subQuestions?.length) && question.options && question.options.length > 0 && (showMainContent || (!!optionRows && optionRows[0] <= optionRows[1])) && renderOptionsGrid(question.options, optionRows, question.optionsInline)}
       </div>
     );
 };
@@ -640,6 +821,10 @@ export const PaperPage = React.forwardRef<HTMLDivElement, { paper: Paper; pageCo
         lineHeight: settings.lineHeight,
         boxSizing: 'border-box'
     };
+    const tableMaxWidth = Math.max(
+        0,
+        settings.width - (settings.margins.left + settings.margins.right) * (96 / 25.4)
+    );
 
     const allQuestionIds = allQuestions.filter(q => q.type !== 'section-header' && q.type !== 'image' && q.type !== 'or').map(q => q.id);
     const headerRows = paper.headerTemplate && paper.headerTemplate.length > 0 ? paper.headerTemplate : null;
@@ -787,7 +972,7 @@ export const PaperPage = React.forwardRef<HTMLDivElement, { paper: Paper; pageCo
                             liveQuestion.subQuestions?.find((sub) => sub.id === part.sub.id) ?? part.sub;
                         return { ...part, sub: liveSub };
                     });
-                    return renderQuestionContent(liveQuestion, questionNumber, allQuestions, content.showMainContent, liveSubParts, paper.mainNumberingFormat, paper.marksFormat, tableEditCallbacks, imageEditCallbacks, content.tableRows ?? null, content.optionRows ?? null, content.textBoxLines, content.formLines, content.stemLines, content.alternativeRange);
+                    return renderQuestionContent(liveQuestion, questionNumber, allQuestions, content.showMainContent, liveSubParts, paper.mainNumberingFormat, paper.marksFormat, tableEditCallbacks, imageEditCallbacks, content.tableRows ?? null, content.optionRows ?? null, content.textBoxLines, content.formLines, content.stemLines, content.alternativeRange, content.mcqStatementRows, tableMaxWidth);
                 })}
             </main>
         </div>
