@@ -1,6 +1,6 @@
 import React from 'react';
 import katex from 'katex';
-import type { Paper, Question, NumberingFormat, MainNumberingFormat, MarksFormat } from './page';
+import type { Paper, Question, NumberingFormat, MainNumberingFormat, MarksFormat, OptionsLayoutMode } from './page';
 import EditableTable, { MIN_TABLE_COL, TABLE_GUTTER_WIDTH } from './EditableTable';
 import EditableImage from './EditableImage';
 import { imageFilterCss, imageGroupStyle, imageItemStyle, getQuestionImages } from './image-style';
@@ -60,6 +60,7 @@ export type SubPart = {
     sub: Question;
     content: boolean;
     optionRows: readonly [number, number] | null;
+    optionLayout?: OptionsLayoutMode;
 };
 
 export type PageContent = {
@@ -68,6 +69,7 @@ export type PageContent = {
     showMainContent: boolean;
     tableRows: readonly [number, number] | null;  // built-in (hints/substitution) table rows to render on this page
     optionRows: readonly [number, number] | null; // main-level options grid rows to render on this page
+    optionLayout?: OptionsLayoutMode;
     mcqStatementRows?: readonly [number, number] | null;
     textBoxLines?: readonly [number, number] | null; // single text box lines to render on this page
     formLines?: readonly [number, number] | null;   // boxed form lines to render on this page
@@ -360,7 +362,98 @@ type OptionsLayout = {
     leftColumnWidth: number;
 };
 
-const OptionsGrid = ({
+const renderOptionsRows = (
+    options: { id: string; text: string }[],
+    rowRange: readonly [number, number] | null,
+    mode: OptionsLayoutMode | 'measuring',
+    leftColumnWidth = 0
+): React.ReactNode => {
+    if (rowRange && rowRange[1] < rowRange[0]) return null;
+
+    const renderOption = (index: number) => {
+        const option = options[index];
+        if (!option) return null;
+        return (
+            <p key={option.id} className="min-w-0">
+                {getNumbering('bangla-alpha', index)}) <RichText content={option.text} />
+            </p>
+        );
+    };
+
+    if (mode === 'single-line') {
+        if (rowRange && !(rowRange[0] <= 0 && rowRange[1] >= 0)) return null;
+        return (
+            <div className="option-row flex flex-nowrap gap-x-8 mb-1" data-option-row={0} data-option-layout={mode}>
+                {options.map((_, index) => renderOption(index))}
+            </div>
+        );
+    }
+
+    if (mode === 'two-column') {
+        const rowStart = rowRange ? rowRange[0] * 2 : 0;
+        const rowEnd = rowRange ? Math.min((rowRange[1] + 1) * 2, options.length) : options.length;
+        const rowGroups: Array<Array<{ opt: { id: string; text: string }; index: number }>> = [];
+        for (let i = rowStart; i < rowEnd; i += 2) {
+            const chunk = options.slice(i, i + 2).map((opt, j) => ({ opt, index: i + j }));
+            if (chunk.length > 0) rowGroups.push(chunk);
+        }
+        return rowGroups.map((chunk, groupIndex) => (
+            <div
+                key={groupIndex}
+                className="option-row grid gap-x-8 mb-1"
+                style={{
+                    gridTemplateColumns: leftColumnWidth > 0
+                        ? `${leftColumnWidth}px minmax(0, 1fr)`
+                        : 'minmax(0, 2fr) minmax(0, 3fr)',
+                }}
+                data-option-row={rowRange ? rowRange[0] + groupIndex : groupIndex}
+                data-option-layout={mode}
+            >
+                {chunk.map(({ opt, index }) => (
+                    <p key={opt.id} className="min-w-0">
+                        {getNumbering('bangla-alpha', index)}) <RichText content={opt.text} />
+                    </p>
+                ))}
+            </div>
+        ));
+    }
+
+    if (mode === 'stacked') {
+        const firstOption = rowRange ? rowRange[0] : 0;
+        const lastOption = rowRange ? Math.min(rowRange[1], options.length - 1) : options.length - 1;
+        return Array.from({ length: Math.max(0, lastOption - firstOption + 1) }, (_, rowIndex) => {
+            const optionIndex = firstOption + rowIndex;
+            return (
+                <div key={optionIndex} className="option-row mb-1" data-option-row={optionIndex} data-option-layout={mode}>
+                    {renderOption(optionIndex)}
+                </div>
+            );
+        });
+    }
+
+    return null;
+};
+
+const StaticOptionsGrid = ({
+    options,
+    rowRange,
+    optionsInline,
+    layoutMode,
+}: {
+    options: { id: string; text: string }[];
+    rowRange: readonly [number, number] | null;
+    optionsInline: boolean;
+    layoutMode?: OptionsLayoutMode;
+}) => {
+    const mode = layoutMode ?? (optionsInline ? 'single-line' : 'two-column');
+    return (
+        <div className="relative pl-6 mt-1">
+            <div className="w-full">{renderOptionsRows(options, rowRange, mode)}</div>
+        </div>
+    );
+};
+
+const MeasuredOptionsGrid = ({
     options,
     rowRange,
     optionsInline,
@@ -430,64 +523,9 @@ const OptionsGrid = ({
     }, [options, optionsInline]);
 
     if (rowRange && rowRange[1] < rowRange[0]) return null;
-
-    const renderOption = (index: number) => {
-        const option = options[index];
-        if (!option) return null;
-        return (
-            <p key={option.id} className="min-w-0">
-                {getNumbering('bangla-alpha', index)}) <RichText content={option.text} />
-            </p>
-        );
-    };
-
-    let rows: React.ReactNode = null;
-    if (layout.mode === 'single-line') {
-        if (!rowRange || (rowRange[0] <= 0 && rowRange[1] >= 0)) {
-            rows = (
-                <div className="option-row flex flex-nowrap gap-x-8 mb-1" data-option-row={0}>
-                    {options.map((_, index) => renderOption(index))}
-                </div>
-            );
-        }
-    } else if (layout.mode === 'two-column') {
-        const rowStart = rowRange ? rowRange[0] * 2 : 0;
-        const rowEnd = rowRange ? Math.min((rowRange[1] + 1) * 2, options.length) : options.length;
-        const rowGroups: Array<{ opt: { id: string; text: string }; index: number }>[] = [];
-        for (let i = rowStart; i < rowEnd; i += 2) {
-            const chunk = options.slice(i, i + 2).map((opt, j) => ({ opt, index: i + j }));
-            if (chunk.length > 0) rowGroups.push(chunk);
-        }
-        rows = rowGroups.map((chunk, groupIndex) => (
-            <div
-                key={groupIndex}
-                className="option-row grid gap-x-8 mb-1"
-                style={{ gridTemplateColumns: `${layout.leftColumnWidth}px minmax(0, 1fr)` }}
-                data-option-row={rowRange ? rowRange[0] + groupIndex : groupIndex}
-            >
-                {chunk.map(({ opt, index }) => (
-                    <p key={opt.id} className="min-w-0">
-                        {getNumbering('bangla-alpha', index)}) <RichText content={opt.text} />
-                    </p>
-                ))}
-            </div>
-        ));
-    } else if (layout.mode === 'stacked') {
-        const firstOption = rowRange ? rowRange[0] : 0;
-        const lastOption = rowRange ? Math.min(rowRange[1], options.length - 1) : options.length - 1;
-        rows = Array.from({ length: Math.max(0, lastOption - firstOption + 1) }, (_, rowIndex) => {
-            const optionIndex = firstOption + rowIndex;
-            return (
-                <div key={optionIndex} className="option-row mb-1" data-option-row={optionIndex}>
-                    {renderOption(optionIndex)}
-                </div>
-            );
-        });
-    }
-
     return (
         <div className="relative pl-6 mt-1">
-            <div ref={layoutRef} className="w-full">{rows}</div>
+            <div ref={layoutRef} className="w-full">{renderOptionsRows(options, rowRange, layout.mode, layout.leftColumnWidth)}</div>
             <div
                 ref={measureRef}
                 aria-hidden="true"
@@ -507,12 +545,24 @@ const OptionsGrid = ({
     );
 };
 
+const OptionsGrid = (props: {
+    options: { id: string; text: string }[];
+    rowRange: readonly [number, number] | null;
+    optionsInline: boolean;
+    staticRender?: boolean;
+    layoutMode?: OptionsLayoutMode;
+}) => props.staticRender
+    ? <StaticOptionsGrid {...props} />
+    : <MeasuredOptionsGrid options={props.options} rowRange={props.rowRange} optionsInline={props.optionsInline} />;
+
 const renderOptionsGrid = (
     options: { id: string; text: string }[],
     rowRange: readonly [number, number] | null = null,
-    optionsInline = false
+    optionsInline = false,
+    staticRender = false,
+    layoutMode?: OptionsLayoutMode
 ) => options.length > 0
-    ? <OptionsGrid options={options} rowRange={rowRange} optionsInline={optionsInline} />
+    ? <OptionsGrid options={options} rowRange={rowRange} optionsInline={optionsInline} staticRender={staticRender} layoutMode={layoutMode} />
     : null;
 
 const renderMcqStatements = (
@@ -546,7 +596,7 @@ const renderMcqStatements = (
   );
 };
 
-export const renderQuestionContent = (question: Question, questionIndex: number, allQuestions: Question[], showMainContent: boolean, subParts: SubPart[] = [], mainNumberingFormat: MainNumberingFormat = 'bangla-numeric', marksFormat: MarksFormat = 'bangla-numeric', tableEditCallbacks?: TableEditCallbacks | null, imageEditCallbacks?: ImageEditCallbacks | null, tableRows: readonly [number, number] | null = null, optionRows: readonly [number, number] | null = null, textBoxLines?: readonly [number, number] | null, formLines?: readonly [number, number] | null, stemLines?: readonly [number, number] | null, alternativeRange?: readonly [number, number] | null, mcqStatementRows?: readonly [number, number] | null, tableMaxWidth?: number) => {
+export const renderQuestionContent = (question: Question, questionIndex: number, allQuestions: Question[], showMainContent: boolean, subParts: SubPart[] = [], mainNumberingFormat: MainNumberingFormat = 'bangla-numeric', marksFormat: MarksFormat = 'bangla-numeric', tableEditCallbacks?: TableEditCallbacks | null, imageEditCallbacks?: ImageEditCallbacks | null, tableRows: readonly [number, number] | null = null, optionRows: readonly [number, number] | null = null, textBoxLines?: readonly [number, number] | null, formLines?: readonly [number, number] | null, stemLines?: readonly [number, number] | null, alternativeRange?: readonly [number, number] | null, mcqStatementRows?: readonly [number, number] | null, tableMaxWidth?: number, staticRender = false, optionLayout?: OptionsLayoutMode) => {
     if (question.type === 'or') {
         return (
             <div key={question.id} className="text-center font-bold my-2 question-item" data-question-id={question.id}>
@@ -796,19 +846,19 @@ export const renderQuestionContent = (question: Question, questionIndex: number,
                          </div>
                        );
                     })()}
-                   {sq.options && sq.options.length > 0 && renderOptionsGrid(sq.options, p.optionRows, sq.optionsInline)}
+                   {sq.options && sq.options.length > 0 && renderOptionsGrid(sq.options, p.optionRows, sq.optionsInline, staticRender, p.optionLayout)}
                  </div>
                );
             })}
           </div>
         )}
   
-        {(question.type !== 'mcq' || !question.subQuestions?.length) && question.options && question.options.length > 0 && (showMainContent || (!!optionRows && optionRows[0] <= optionRows[1])) && renderOptionsGrid(question.options, optionRows, question.optionsInline)}
+        {(question.type !== 'mcq' || !question.subQuestions?.length) && question.options && question.options.length > 0 && (showMainContent || (!!optionRows && optionRows[0] <= optionRows[1])) && renderOptionsGrid(question.options, optionRows, question.optionsInline, staticRender, optionLayout)}
       </div>
     );
 };
 
-export const PaperPage = React.forwardRef<HTMLDivElement, { paper: Paper; pageContent: PageContent[]; isFirstPage: boolean; settings: PaperSettings; allQuestions: Question[]; tableEditCallbacks?: TableEditCallbacks | null; imageEditCallbacks?: ImageEditCallbacks | null }>(({ paper, pageContent, isFirstPage, settings, allQuestions, tableEditCallbacks, imageEditCallbacks }, ref) => {
+export const PaperPage = React.forwardRef<HTMLDivElement, { paper: Paper; pageContent: PageContent[]; isFirstPage: boolean; settings: PaperSettings; allQuestions: Question[]; tableEditCallbacks?: TableEditCallbacks | null; imageEditCallbacks?: ImageEditCallbacks | null; staticRender?: boolean }>(({ paper, pageContent, isFirstPage, settings, allQuestions, tableEditCallbacks, imageEditCallbacks, staticRender = false }, ref) => {
     
     const pageStyle: React.CSSProperties = {
         width: `${settings.width}px`,
@@ -972,7 +1022,7 @@ export const PaperPage = React.forwardRef<HTMLDivElement, { paper: Paper; pageCo
                             liveQuestion.subQuestions?.find((sub) => sub.id === part.sub.id) ?? part.sub;
                         return { ...part, sub: liveSub };
                     });
-                    return renderQuestionContent(liveQuestion, questionNumber, allQuestions, content.showMainContent, liveSubParts, paper.mainNumberingFormat, paper.marksFormat, tableEditCallbacks, imageEditCallbacks, content.tableRows ?? null, content.optionRows ?? null, content.textBoxLines, content.formLines, content.stemLines, content.alternativeRange, content.mcqStatementRows, tableMaxWidth);
+                    return renderQuestionContent(liveQuestion, questionNumber, allQuestions, content.showMainContent, liveSubParts, paper.mainNumberingFormat, paper.marksFormat, tableEditCallbacks, imageEditCallbacks, content.tableRows ?? null, content.optionRows ?? null, content.textBoxLines, content.formLines, content.stemLines, content.alternativeRange, content.mcqStatementRows, tableMaxWidth, staticRender, content.optionLayout);
                 })}
             </main>
         </div>

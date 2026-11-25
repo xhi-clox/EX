@@ -192,6 +192,7 @@ async function renderHalf(half: HalfPayload | null, paper: Paper, settings: Pape
       isFirstPage: half.isFirstPage,
       settings: safeSettings,
       allQuestions: paper.questions,
+      staticRender: true,
     })
   );
   const preScale = Math.min(halfW / safeW, sheetH / safeH);

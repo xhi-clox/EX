@@ -514,7 +514,10 @@ export type SubPart = {
     sub: Question;
     content: boolean;
     optionRows: readonly [number, number] | null;
+    optionLayout?: OptionsLayoutMode;
 };
+
+export type OptionsLayoutMode = 'single-line' | 'two-column' | 'stacked';
 
 export type PageContent = {
     mainQuestion: Question;
@@ -522,6 +525,7 @@ export type PageContent = {
     showMainContent: boolean;
     tableRows: readonly [number, number] | null;
     optionRows: readonly [number, number] | null;
+    optionLayout?: OptionsLayoutMode;
     textBoxLines?: readonly [number, number] | null;
     formLines?: readonly [number, number] | null;
     stemLines?: readonly [number, number] | null;
@@ -2707,6 +2711,12 @@ case 'fill-in-the-blanks':
 
             const mergeRange = (prev: readonly [number, number] | null, index: number): [number, number] =>
                 prev && index === prev[1] + 1 ? [prev[0], index] : [index, index];
+            const readOptionLayout = (element: HTMLElement): OptionsLayoutMode | undefined => {
+                const layout = element.dataset.optionLayout;
+                return layout === 'single-line' || layout === 'two-column' || layout === 'stacked'
+                    ? layout
+                    : undefined;
+            };
 
             // Case 1: Main content (stem). The stem is measured line by line so a
             // long question can start at the bottom of a page and continue on the
@@ -2863,10 +2873,12 @@ case 'fill-in-the-blanks':
                     flushIfOver(rowHeight);
                     const item = ensureItem(false);
                     const existing = item.subParts.find(p => p.sub.id === subQuestionObj.id);
+                    const optionLayout = readOptionLayout(subOptionRowEls[ri]);
                     if (existing) {
                         existing.optionRows = mergeRange(existing.optionRows, ri);
+                        existing.optionLayout ??= optionLayout;
                     } else {
-                        item.subParts.push({ sub: subQuestionObj, content: false, optionRows: [ri, ri] });
+                        item.subParts.push({ sub: subQuestionObj, content: false, optionRows: [ri, ri], optionLayout });
                     }
                     usedHeight += rowHeight;
                 }
@@ -2886,6 +2898,7 @@ case 'fill-in-the-blanks':
                 flushIfOver(rowHeight);
                 const item = ensureItem(stemOnThisPage);
                 item.optionRows = mergeRange(item.optionRows, ri);
+                item.optionLayout ??= readOptionLayout(mainOptionRowEls[ri]);
                 usedHeight += rowHeight;
             }
             if (mainOptionRowEls.length > 0 && gridBaseItem && gridBaseItem.optionRows === null) {
