@@ -2096,14 +2096,48 @@ case 'fill-in-the-blanks':
                        </div>
                      );
                    })}
-                   <Button variant="ghost" size="sm" className="-ml-2 h-7 text-xs text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white" onClick={() => addAlternative(question.id)}>
-                     <Plus className="mr-1 size-3.5" /> অথবা যোগ করুন
-                   </Button>
                  </div>
             </div>
           </div>
-            <div className="flex items-center gap-4 pl-8">
-              <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2 pl-8">
+              <Button variant="ghost" size="sm" className="-ml-2 h-7 text-xs text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white" onClick={() => addAlternative(question.id)}>
+                <Plus className="mr-1 size-3.5" /> অথবা যোগ করুন
+              </Button>
+
+              {question.type !== 'table' && question.type !== 'fill-in-the-blanks' && (
+                question.tableData && question.tableData.length > 0 ? (
+                  <Button variant="outline" size="sm" onClick={() => removeQuestionTable(question.id)}>
+                    <Trash2 className="mr-2 size-4" /> সারণি মুছুন
+                  </Button>
+                ) : (
+                  <Button variant="outline" size="sm" onClick={() => addQuestionTable(question.id)}>
+                    <Plus className="mr-2 size-4" /> সারণি যোগ করুন
+                  </Button>
+                )
+              )}
+
+              <div className="ml-auto flex flex-wrap items-center gap-4">
+                {isContainer && (
+                  <div className="flex items-center gap-2">
+                    <Label htmlFor={`numbering-${question.id}`} className="text-sm">নাম্বারিং:</Label>
+                    <Select
+                      value={question.numberingFormat === null ? 'none' : (question.numberingFormat ?? 'bangla-alpha')}
+                      onValueChange={(value) => handleQuestionChange(question.id, 'numberingFormat', value === 'none' ? null : (value as NumberingFormat))}
+                    >
+                      <SelectTrigger id={`numbering-${question.id}`} className="w-32 h-8 text-xs">
+                        <SelectValue placeholder="Format" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="english-numeric">1, 2, 3</SelectItem>
+                        <SelectItem value="bangla-alpha">ক, খ, গ</SelectItem>
+                        <SelectItem value="bangla-numeric">১, ২, ৩</SelectItem>
+                        <SelectItem value="roman">i, ii, iii</SelectItem>
+                        <SelectItem value="none">কিছু না দেখাও</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+                <div className="flex items-center gap-2">
                   <Label htmlFor={`marks-${question.id}`} className="text-sm">Marks:</Label>
                   <Input
                     id={`marks-${question.id}`}
@@ -2115,42 +2149,12 @@ case 'fill-in-the-blanks':
                     className="w-20 h-8"
                     placeholder="Marks"
                   />
+                </div>
               </div>
-              { isContainer && (
-              <div className="flex items-center gap-2">
-                  <Label htmlFor={`numbering-${question.id}`} className="text-sm">নাম্বারিং:</Label>
-                  <Select
-                    value={question.numberingFormat === null ? 'none' : (question.numberingFormat ?? 'bangla-alpha')}
-                    onValueChange={(value) => handleQuestionChange(question.id, 'numberingFormat', value === 'none' ? null : (value as NumberingFormat))}
-                  >
-                    <SelectTrigger id={`numbering-${question.id}`} className="w-32 h-8 text-xs">
-                      <SelectValue placeholder="Format" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="english-numeric">1, 2, 3</SelectItem>
-                      <SelectItem value="bangla-alpha">ক, খ, গ</SelectItem>
-                      <SelectItem value="bangla-numeric">১, ২, ৩</SelectItem>
-                      <SelectItem value="roman">i, ii, iii</SelectItem>
-                      <SelectItem value="none">কিছু না দেখাও</SelectItem>
-                    </SelectContent>
-                  </Select>
-              </div>
-              )}
             </div>
-          {question.type !== 'table' && question.type !== 'fill-in-the-blanks' && (
-            <div className="pl-8 space-y-2">
-              {question.tableData && question.tableData.length > 0 ? (
-                <>
-                  {tableEditor()}
-                  <Button variant="outline" size="sm" onClick={() => removeQuestionTable(question.id)}>
-                    <Trash2 className="mr-2 size-4" /> সারণি মুছুন
-                  </Button>
-                </>
-              ) : (
-                <Button variant="outline" size="sm" onClick={() => addQuestionTable(question.id)}>
-                  <Plus className="mr-2 size-4" /> সারণি যোগ করুন
-                </Button>
-              )}
+          {question.type !== 'table' && question.type !== 'fill-in-the-blanks' && question.tableData && question.tableData.length > 0 && (
+            <div className="pl-8">
+              {tableEditor()}
             </div>
           )}
           {children}
@@ -3230,42 +3234,35 @@ case 'fill-in-the-blanks':
       />
       <div className="flex min-h-0 flex-1 overflow-hidden">
         {!isPreview && paper.questions.length > 0 && (
-          <aside className="hidden w-56 shrink-0 flex-col border-r border-white/[0.06] bg-slate-950/60 xl:flex">
-            <div className="border-b border-white/[0.06] px-4 py-3">
-              <p className="text-xs font-semibold text-slate-200">বিভাগ ও প্রশ্ন</p>
-              <p className="mt-1 text-[10px] text-slate-500">নেভিগেট করতে চাপ দিন</p>
+          <aside className="hidden w-16 shrink-0 flex-col justify-center px-2 py-4 xl:flex">
+            <div className="flex max-h-full min-h-0 w-full flex-col overflow-hidden rounded-[26px] border border-slate-200/80 bg-white shadow-sm">
+              <nav aria-label="বিভাগ ও প্রশ্নে যান" className="app-scrollbar-light min-h-0 flex-1 space-y-0.5 overflow-y-auto px-2 pb-3 pt-1">
+                {sectionNavigation.map(({ question, index, number, isSection }) => (
+                  <button
+                    key={question.id}
+                    type="button"
+                    onClick={() => goToQuestion(question.id)}
+                    aria-current={activeQuestionId === question.id ? 'location' : undefined}
+                    title={question.content || TYPE_LABEL[question.type] || 'প্রশ্ন'}
+                    aria-label={`${question.content || TYPE_LABEL[question.type] || 'প্রশ্ন'}, প্রশ্ন ${index + 1}`}
+                    className={cn(
+                      'relative flex w-full items-center justify-center rounded-xl px-1 py-2 text-left text-xs transition-all duration-150',
+                      activeQuestionId === question.id
+                        ? 'bg-teal-50 text-teal-700 shadow-sm ring-1 ring-inset ring-teal-700/10'
+                        : 'text-slate-700 hover:bg-slate-50',
+                      isSection && 'mt-1.5 border-t border-slate-200 pt-2.5 font-semibold text-slate-900'
+                    )}
+                  >
+                    <span className={cn(
+                      'flex size-6 shrink-0 items-center justify-center rounded-md text-[10px] font-semibold tabular-nums',
+                      isSection ? 'bg-violet-100 text-violet-600' : 'bg-slate-100 text-slate-500'
+                    )}>
+                      {number}
+                    </span>
+                  </button>
+                ))}
+              </nav>
             </div>
-            <nav aria-label="বিভাগ ও প্রশ্নে যান" className="app-scrollbar min-h-0 flex-1 space-y-1 overflow-y-auto p-2">
-              {sectionNavigation.map(({ question, index, number, isSection }) => (
-                <button
-                  key={question.id}
-                  type="button"
-                  onClick={() => goToQuestion(question.id)}
-                  aria-current={activeQuestionId === question.id ? 'location' : undefined}
-                  title={question.content || TYPE_LABEL[question.type] || 'প্রশ্ন'}
-                  className={cn(
-                    'flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-xs transition-colors',
-                    activeQuestionId === question.id
-                      ? 'bg-teal-400/10 text-teal-300'
-                      : 'text-slate-400 hover:bg-white/[0.06] hover:text-slate-200',
-                    isSection && 'mt-2 border-t border-white/[0.06] pt-3 font-semibold text-slate-200'
-                  )}
-                >
-                  <span className={cn(
-                    'flex size-6 shrink-0 items-center justify-center rounded-md text-[10px] font-semibold tabular-nums',
-                    isSection ? 'bg-violet-400/10 text-violet-300' : 'bg-white/[0.05] text-slate-400'
-                  )}>
-                    {isSection ? `§${number}` : number}
-                  </span>
-                  <span className="min-w-0 flex-1 truncate">
-                    {isSection
-                      ? question.content || `বিভাগ ${number}`
-                      : `${TYPE_LABEL[question.type] ?? 'প্রশ্ন'}${snippet(question) ? ` · ${snippet(question)}` : ''}`}
-                  </span>
-                  <span className="sr-only">আইটেম {index + 1}</span>
-                </button>
-              ))}
-            </nav>
           </aside>
         )}
         <main

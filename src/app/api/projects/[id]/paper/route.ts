@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import type { Prisma } from '@prisma/client';
+import { auth } from '@/auth';
 import { prisma } from '@/lib/prisma';
 import { isPrismaError } from '@/lib/project-server';
 
@@ -9,6 +10,11 @@ export const dynamic = 'force-dynamic';
 type RouteContext = { params: Promise<{ id: string }> };
 
 export async function PUT(request: Request, { params }: RouteContext) {
+  const session = await auth();
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: 'Unauthorized.' }, { status: 401 });
+  }
+
   try {
     const { id } = await params;
     const paper = await request.json();
@@ -17,7 +23,9 @@ export async function PUT(request: Request, { params }: RouteContext) {
       return NextResponse.json({ error: 'Invalid paper payload.' }, { status: 400 });
     }
 
-    const existing = await prisma.project.findUnique({ where: { id } });
+    const existing = await prisma.project.findFirst({
+      where: { id, userId: session.user.id },
+    });
     if (!existing) {
       return NextResponse.json({ error: 'Project not found.' }, { status: 404 });
     }

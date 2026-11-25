@@ -14,6 +14,7 @@ import {
     PanelLeftOpen,
 } from 'lucide-react';
 import { Logo } from '../icons/Logo';
+import { signOut } from 'next-auth/react';
 import { cn } from '@/lib/utils';
 
 const navSections = [
@@ -88,7 +89,24 @@ export function AppSidebar({ onCollapseChange }: AppSidebarProps) {
             <div key={section.title} className="mb-8">
                 <h3 className="px-6 pb-3 text-[10px] font-bold uppercase tracking-[0.2em] text-[#83a6a5]">{section.title}</h3>
                 <nav>
-                    {section.items.map(item => (
+                    {section.items.map(item => {
+                        if (item.label === 'Logout') {
+                            return (
+                                <button
+                                    key={item.href}
+                                    type="button"
+                                    onClick={() => { void signOut({ callbackUrl: '/login' }); }}
+                                    className={cn(
+                                        "flex w-full items-center gap-3 border-l-4 border-transparent px-6 py-3 text-sm font-semibold text-[#b5ccca] transition-colors hover:bg-white/5 hover:text-white"
+                                    )}
+                                >
+                                    <item.icon className="size-[18px]" />
+                                    <span>{item.label}</span>
+                                </button>
+                            );
+                        }
+
+                        return (
                         <Link 
                             key={item.href} 
                             href={item.href}
@@ -103,7 +121,8 @@ export function AppSidebar({ onCollapseChange }: AppSidebarProps) {
                             <item.icon className="size-[18px]" />
                             <span>{item.label}</span>
                         </Link>
-                    ))}
+                        );
+                    })}
                 </nav>
             </div>
         ))}

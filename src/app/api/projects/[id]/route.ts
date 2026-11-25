@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import type { Prisma } from '@prisma/client';
+import { auth } from '@/auth';
 import { prisma } from '@/lib/prisma';
 import { isPrismaError, toProjectSummary } from '@/lib/project-server';
 
@@ -9,10 +10,15 @@ export const dynamic = 'force-dynamic';
 type RouteContext = { params: Promise<{ id: string }> };
 
 export async function GET(_request: Request, { params }: RouteContext) {
+  const session = await auth();
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: 'Unauthorized.' }, { status: 401 });
+  }
+
   try {
     const { id } = await params;
-    const project = await prisma.project.findUnique({
-      where: { id },
+    const project = await prisma.project.findFirst({
+      where: { id, userId: session.user.id },
       include: { paper: true },
     });
 
@@ -31,9 +37,22 @@ export async function GET(_request: Request, { params }: RouteContext) {
 }
 
 export async function PATCH(request: Request, { params }: RouteContext) {
+  const session = await auth();
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: 'Unauthorized.' }, { status: 401 });
+  }
+
   try {
     const { id } = await params;
     const body = await request.json();
+
+    const existing = await prisma.project.findFirst({
+      where: { id, userId: session.user.id },
+      select: { id: true },
+    });
+    if (!existing) {
+      return NextResponse.json({ error: 'Project not found.' }, { status: 404 });
+    }
 
     const data: Prisma.ProjectUpdateInput = {};
     if (typeof body?.name === 'string' && body.name.trim()) data.name = body.name.trim();
@@ -53,14 +72,23 @@ export async function PATCH(request: Request, { params }: RouteContext) {
 }
 
 export async function DELETE(_request: Request, { params }: RouteContext) {
+  const session = await auth();
+  if (!session?.user?.id) {
+    return NextResponse.json({ error: 'Unauthorized.' }, { status: 401 });
+  }
+
   try {
     const { id } = await params;
-    await prisma.project.delete({ where: { id } });
-    return NextResponse.json({ ok: true });
-  } catch (error) {
-    if (isPrismaError(error, 'P2025')) {
+    const result = await prisma.project.deleteMany({
+      where: { id, userId: session.user.id },
+    });
+
+    if (result.count === 0) {
       return NextResponse.json({ error: 'Project not found.' }, { status: 404 });
     }
+
+    return NextResponse.json({ ok: true });
+  } catch (error) {
     console.error('Failed to delete project', error);
     return NextResponse.json({ error: 'Failed to delete project.' }, { status: 500 });
   }
