@@ -677,7 +677,7 @@ export const renderQuestionContent = (question: Question, questionIndex: number,
         const num = question.numberingLabel ?? getNumbering(mainNumberingFormat, questionIndex - 1);
         return num ? `${num}. ` : '';
     })();
-    const marksNode = question.marks !== undefined && question.marks > 0
+    const marksNode = question.type !== 'creative' && question.marks !== undefined && question.marks > 0
         ? <p>{marksFormat === 'bangla-numeric' ? toBanglaDigits(question.marks) : question.marks}</p>
         : null;
     const stemDocument = question.contentDocument ?? plainTextToRichTextDocument(question.content);
@@ -811,6 +811,14 @@ export const renderQuestionContent = (question: Question, questionIndex: number,
               const sqIndex = mainQuestionObj?.subQuestions?.findIndex(osq => osq.id === sq.id) ?? -1;
               if (sqIndex === -1) return null;
               if (!p.content && !(sq.options && sq.options.length > 0)) return null;
+              const subMarksNode =
+                question.type === 'creative' && sq.marks !== undefined && sq.marks > 0
+                  ? (
+                    <span className="ml-3 shrink-0 whitespace-nowrap">
+                      {marksFormat === 'bangla-numeric' ? toBanglaDigits(sq.marks) : sq.marks}
+                    </span>
+                  )
+                  : null;
 
                    return (
                      <div key={sq.id} className="subquestion-item pt-1" data-subquestion-id={sq.id}>
@@ -841,6 +849,7 @@ export const renderQuestionContent = (question: Question, questionIndex: number,
                                  />
                                </p>
                              )}
+                             {p.content ? subMarksNode : null}
                            </div>
                            {renderMcqStatements(sq)}
                          </div>

@@ -14,7 +14,7 @@ import {generateWithFallback, generateWithModelChain} from '@/ai/generate-with-f
 
 const SuggestQuestionPaperInputSchema = z.object({
   topic: z.string().describe('The topic of the question paper.'),
-  gradeLevel: z.string().describe('The grade level for the question paper (e.g., 6, 7, 8, 9, 10, 11, 12).'),
+  gradeLevel: z.string().describe('The student level: KG, Nursery, or class 1 through class 12.'),
 });
 export type SuggestQuestionPaperInput = z.infer<typeof SuggestQuestionPaperInputSchema>;
 
@@ -68,8 +68,7 @@ const SUGGESTION_PROMPT = `You are an expert Bangladeshi teacher. You will sugge
 
 Topic: {{topic}}
 Grade Level: {{gradeLevel}}
-
-Suggest a question paper with a title, subject, grade, and sections. Each question must use one of the editor types exactly: 'mcq' for বহুনির্বাচনী with an options array, 'fill-in-the-blanks' for শূন্যস্থান পূরণ, 'table' for সারণি/ছক with tableData, 'creative' for সৃজনশীল with an উদ্দীপক and ক/খ/গ/ঘ subQuestions, 'short' for সংক্ষিপ্ত প্রশ্ন, 'essay' for রচনামূলক প্রশ্ন, 'passage' for a standalone passage, or 'section-header' for section labels. Do not represent an MCQ, table, or creative sub-question as generic plain text. Include IDs for every question, sub-question, and option.
+Suggest a question paper with a title, subject, grade, and sections. Each question must use one of the editor types exactly: 'mcq' for বহুনির্বাচনী with an options array, 'fill-in-the-blanks' for শূন্যস্থান পূরণ, 'table' for সারণি/ছক with tableData, 'creative' for সৃজনশীল with an উদ্দীপক and ক/খ/গ/ঘ subQuestions, 'short' for সংক্ষিপ্ত প্রশ্ন, 'essay' for রচনামূলক প্রশ্ন, 'passage' for a standalone passage, or 'section-header' for section labels. For a creative question, assign marks to each ক/খ/গ/ঘ sub-question, not to the parent question. Do not represent an MCQ, table, or creative sub-question as generic plain text. Include IDs for every question, sub-question, and option.
 Use a balanced Bangladeshi exam structure and keep the Bengali wording natural. Set numberingLabel for every question and sub-question using Bengali digits or letters where appropriate, without punctuation. Keep those labels out of content because the editor renders them.
 Every question AND every sub-question must carry its own 'marks' value as a plain number, and the marks of the sub-questions must add up to the marks of their parent question. A সারণি or ছক may belong to any question type: attach it with 'tableData', 'rows' and 'cols' (or emit it as its own 'table' item) instead of dropping it. Keep every উদ্দীপক, instruction and clue block with the question it belongs to.
 

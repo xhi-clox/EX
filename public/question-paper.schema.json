@@ -1,20 +1,44 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Bangla Exam Maker question import format",
-  "description": "Return one JSON object with a questions array. Use exact question type names from the enum. Keep printed text and marks faithful to the source; omit marks when none are printed.",
+  "description": "Return one JSON object with questions and any visibly available paper-header metadata. Use exact question type names from the enum. Keep printed text and marks faithful to the source; omit marks when none are printed.",
   "type": "object",
   "properties": {
     "title": {
       "type": "string",
-      "description": "Optional paper title. It is not imported as a question."
+      "description": "Legacy alias for examTitle. If both are present, examTitle takes precedence."
+    },
+    "schoolName": {
+      "type": "string",
+      "description": "Optional school or institution name; imported into the paper header."
+    },
+    "examTitle": {
+      "type": "string",
+      "description": "Optional exam title; imported into the paper header."
     },
     "subject": {
       "type": "string",
-      "description": "Optional subject."
+      "description": "Optional subject; imported into the paper header."
     },
     "grade": {
       "type": "string",
-      "description": "Optional class or grade."
+      "description": "Optional class or grade; imported into the paper header."
+    },
+    "timeAllowed": {
+      "type": "string",
+      "description": "Optional exam duration as printed; imported into the paper header."
+    },
+    "totalMarks": {
+      "oneOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "number",
+          "minimum": 0
+        }
+      ],
+      "description": "Optional paper total marks; imported into the paper header."
     },
     "questions": {
       "type": "array",
@@ -172,13 +196,31 @@
         "marks": {
           "type": "number",
           "minimum": 0,
-          "description": "Printed marks for this item only. Omit if the image has no marks; do not guess."
+          "description": "Printed marks for this item only. For creative questions, omit marks on the parent and put each visible part's marks on its sub-question. Omit marks when none are printed; do not guess."
         },
         "options": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/option"
           }
+        },
+        "mcqOptionType": {
+          "type": "string",
+          "enum": [
+            "standard",
+            "statement-combination"
+          ]
+        },
+        "optionsInline": {
+          "type": "boolean"
+        },
+        "mcqStatements": {
+          "type": "array",
+          "maxItems": 3,
+          "items": {
+            "type": "string"
+          },
+          "description": "Statements used by a statement-combination MCQ, in printed order."
         },
         "subQuestions": {
           "type": "array",
@@ -380,6 +422,11 @@
               "subQuestions": {
                 "description": "The related ক, খ, গ, ঘ parts, in printed order."
               }
+            },
+            "not": {
+              "required": [
+                "marks"
+              ]
             }
           }
         },
@@ -423,7 +470,12 @@
   },
   "examples": [
     {
-      "title": "Question paper example",
+      "schoolName": "উদাহরণ বিদ্যালয়",
+      "examTitle": "বার্ষিক পরীক্ষা",
+      "subject": "বাংলা",
+      "grade": "৬ষ্ঠ শ্রেণি",
+      "timeAllowed": "২ ঘণ্টা",
+      "totalMarks": 100,
       "questions": [
         {
           "id": "q1",
@@ -471,7 +523,8 @@
               "id": "q4a",
               "numberingLabel": "ক",
               "type": "short",
-              "content": "তার কাছে কয়টি বই আছে?"
+              "content": "তার কাছে কয়টি বই আছে?",
+              "marks": 1
             }
           ]
         },

@@ -1,3 +1,5 @@
+import { formatClassOrdinal } from '@/lib/school-classes';
+
 export type HeaderCellKind =
   | 'text'
   | 'school'
@@ -75,13 +77,8 @@ const subjectMap: { [key: string]: string } = {
   science: 'বিজ্ঞান',
 };
 
-const gradeMap: { [key: string]: string } = {
-  '9': 'নবম',
-  '10': 'দশম',
-};
-
 export const subjectLabel = (key: string) => subjectMap[key] || key;
-export const gradeLabel = (key: string) => gradeMap[key] || key;
+export const gradeLabel = (key: string) => formatClassOrdinal(key);
 
 let idCounter = 0;
 const newId = (prefix: string) => `${prefix}${Date.now()}${++idCounter}`;

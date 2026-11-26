@@ -36,6 +36,7 @@ import type { QuestionAlternative, RichTextDocument, TextAlign } from './text-fo
 import 'katex/dist/katex.min.css';
 import LatexRenderer from './LatexRenderer';
 import { migrateLocalDataIfNeeded } from '@/lib/local-migration';
+import { readPaperDefaults, readWorkspaceSettings } from '@/lib/paper-defaults';
 import { cn } from '@/lib/utils';
 import { ToastAction } from '@/components/ui/toast';
 import { Copy, Undo2, Redo2, Eye, Download, PanelRight, Keyboard, ScanText, Sun, Moon } from 'lucide-react';
@@ -607,14 +608,22 @@ function EditorPage() {
           paper: Paper | null;
         };
 
+        const defaults = readPaperDefaults();
+        const defaultMarks = Number(defaults.totalMarks);
+
         const initialData: Paper = payload.paper
           ? { ...payload.paper, id: projectId }
           : {
               ...initialPaperData,
               id: projectId,
+              schoolName: defaults.schoolName,
+              timeAllowed: defaults.timeAllowed,
+              totalMarks: Number.isFinite(defaultMarks) && defaultMarks > 0
+                ? defaultMarks
+                : initialPaperData.totalMarks,
               examTitle: payload.project.name,
-              subject: payload.project.subject,
-              grade: payload.project.class,
+              subject: payload.project.subject || defaults.defaultSubject,
+              grade: payload.project.class || defaults.defaultClass,
             };
 
         const storedQuestions = initialData.questions || [];
@@ -1046,6 +1055,13 @@ function EditorPage() {
       return;
     }
     setSaveStatus('dirty');
+
+    // Settings can disable autosave. The paper is still flushed when leaving the
+    // editor, and Ctrl/⌘+S always saves immediately.
+    if (!readWorkspaceSettings().autosave) {
+      return;
+    }
+
     const timer = window.setTimeout(() => {
       void persistPaper(paper);
     }, 600);
@@ -1085,9 +1101,13 @@ function EditorPage() {
     const newQuestions = normalizeImportedQuestionGroups(importedData.questions || []);
 
     const combinedPaper: Paper = produce(existingPaper, draft => {
-        if (importedData.title) draft.examTitle = importedData.title;
+        if (importedData.examTitle) draft.examTitle = importedData.examTitle;
+        else if (importedData.title) draft.examTitle = importedData.title;
+        if (importedData.schoolName) draft.schoolName = importedData.schoolName;
         if (importedData.subject) draft.subject = importedData.subject;
         if (importedData.grade) draft.grade = importedData.grade;
+        if (importedData.timeAllowed) draft.timeAllowed = importedData.timeAllowed;
+        if (importedData.totalMarks !== undefined) draft.totalMarks = importedData.totalMarks;
 
         draft.questions.push(...newQuestions);
       });
@@ -2141,19 +2161,21 @@ case 'fill-in-the-blanks':
                     </Select>
                   </div>
                 )}
-                <div className="flex items-center gap-2">
-                  <Label htmlFor={`marks-${question.id}`} className="text-sm">Marks:</Label>
-                  <Input
-                    id={`marks-${question.id}`}
-                    type="number"
-                    min={0}
-                    value={question.marks ?? ''}
-                    onFocus={(e) => handleFocus(e, `marks-${question.id}`)}
-                    onChange={(e) => handleQuestionChange(question.id, 'marks', e.target.value === '' ? undefined : Number(e.target.value))}
-                    className="w-20 h-8"
-                    placeholder="Marks"
-                  />
-                </div>
+                {question.type !== 'creative' && (
+                  <div className="flex items-center gap-2">
+                    <Label htmlFor={`marks-${question.id}`} className="text-sm">Marks:</Label>
+                    <Input
+                      id={`marks-${question.id}`}
+                      type="number"
+                      min={0}
+                      value={question.marks ?? ''}
+                      onFocus={(e) => handleFocus(e, `marks-${question.id}`)}
+                      onChange={(e) => handleQuestionChange(question.id, 'marks', e.target.value === '' ? undefined : Number(e.target.value))}
+                      className="w-20 h-8"
+                      placeholder="Marks"
+                    />
+                  </div>
+                )}
               </div>
             </div>
           {question.type !== 'table' && question.type !== 'fill-in-the-blanks' && question.tableData && question.tableData.length > 0 && (
@@ -2212,6 +2234,34 @@ case 'fill-in-the-blanks':
                         <Trash2 className="size-4" />
                     </Button>
                   </div>
+                  {question.type === 'creative' && (
+                    <div className="flex items-center justify-end gap-2">
+                      <Label htmlFor={`marks-${sq.id}`} className="text-xs text-slate-600 dark:text-slate-300">
+                        {sq.numberingLabel ??
+                          getNumbering(question.numberingFormat, sqIndex) ??
+                          ['ক', 'খ', 'গ', 'ঘ'][sqIndex] ??
+                          sqIndex + 1}{' '}
+                        নম্বর:
+                      </Label>
+                      <Input
+                        id={`marks-${sq.id}`}
+                        type="number"
+                        min={0}
+                        value={sq.marks ?? ''}
+                        onFocus={(event) => handleFocus(event, `marks-${sq.id}`)}
+                        onChange={(event) =>
+                          handleSubQuestionChange(
+                            question.id,
+                            sq.id,
+                            'marks',
+                            event.target.value === '' ? undefined : Number(event.target.value)
+                          )
+                        }
+                        className="h-8 w-20"
+                        placeholder="Marks"
+                      />
+                    </div>
+                  )}
                   {sq.type === 'mcq' && mcqOptionEditor(sq, sq.id)}
                 </div>
                 </div>
@@ -2997,7 +3047,11 @@ case 'fill-in-the-blanks':
   const paperStats = {
     count: countable.length,
     marks: countable.reduce(
-      (sum, q) => sum + (q.marks ?? (q.subQuestions ?? []).reduce((s, sq) => s + (sq.marks ?? 0), 0)),
+      (sum, q) =>
+        sum +
+        (q.type === 'creative'
+          ? (q.subQuestions ?? []).reduce((subTotal, sq) => subTotal + (sq.marks ?? 0), 0)
+          : q.marks ?? (q.subQuestions ?? []).reduce((subTotal, sq) => subTotal + (sq.marks ?? 0), 0)),
       0
     ),
     total: paper.totalMarks,

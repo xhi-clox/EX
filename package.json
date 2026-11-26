@@ -10,7 +10,7 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "postinstall": "prisma generate",
+    "postinstall": "patch-package && prisma generate",
     "db:local": "node scripts/start-local-db.mjs",
     "db:push": "prisma db push",
     "db:generate": "prisma generate",

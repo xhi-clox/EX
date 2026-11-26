@@ -19,7 +19,7 @@ export async function GET(_request: Request, { params }: RouteContext) {
     const { id } = await params;
     const project = await prisma.project.findFirst({
       where: { id, userId: session.user.id },
-      include: { paper: true },
+      include: { paper: true, group: { select: { id: true, name: true } } },
     });
 
     if (!project) {
@@ -27,7 +27,7 @@ export async function GET(_request: Request, { params }: RouteContext) {
     }
 
     return NextResponse.json({
-      project: toProjectSummary(project),
+      project: toProjectSummary(project, project.paper?.data),
       paper: project.paper?.data ?? null,
     });
   } catch (error) {
@@ -59,8 +59,23 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     if (typeof body?.subject === 'string' && body.subject.trim()) data.subject = body.subject.trim();
     if (typeof body?.class === 'string' && body.class.trim()) data.classLevel = body.class.trim();
     if (typeof body?.classLevel === 'string' && body.classLevel.trim()) data.classLevel = body.classLevel.trim();
+    if (body?.groupId === null) data.group = { disconnect: true };
+    if (typeof body?.groupId === 'string' && body.groupId.trim()) {
+      const ownedGroup = await prisma.projectGroup.findFirst({
+        where: { id: body.groupId.trim(), userId: session.user.id },
+        select: { id: true },
+      });
+      if (!ownedGroup) {
+        return NextResponse.json({ error: 'Group not found.' }, { status: 404 });
+      }
+      data.group = { connect: { id: ownedGroup.id } };
+    }
 
-    const project = await prisma.project.update({ where: { id }, data });
+    const project = await prisma.project.update({
+      where: { id },
+      data,
+      include: { group: { select: { id: true, name: true } } },
+    });
     return NextResponse.json(toProjectSummary(project));
   } catch (error) {
     if (isPrismaError(error, 'P2025')) {

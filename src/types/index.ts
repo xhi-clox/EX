@@ -25,6 +25,14 @@ export interface Project {
   class: string;
   subject: string;
   lastUpdated: string;
+  /** Number of saved questions, including sub-questions. */
+  questionCount?: number;
+  /** Sum of saved question marks (falls back to the paper total). */
+  totalMarks?: number;
+  /** Whether the project has a saved paper document. */
+  hasPaper?: boolean;
+  groupId?: string | null;
+  groupName?: string | null;
   paper?: PaperData;
 }
 

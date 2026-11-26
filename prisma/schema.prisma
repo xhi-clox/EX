@@ -18,8 +18,25 @@ model User {
   accounts      Account[]
   sessions      Session[]
   projects      Project[]
+  projectGroups ProjectGroup[]
   createdAt     DateTime  @default(now()) @map("created_at")
   updatedAt     DateTime  @updatedAt @map("updated_at")
+}
+
+model ProjectGroup {
+  id        String         @id @default(cuid())
+  name      String
+  userId    String         @map("user_id")
+  user      User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  parentId  String?        @map("parent_id")
+  parent    ProjectGroup?  @relation("ProjectGroupTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children  ProjectGroup[] @relation("ProjectGroupTree")
+  projects  Project[]
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+
+  @@index([userId])
+  @@index([parentId])
 }
 
 model Account {
@@ -65,10 +82,13 @@ model Project {
   userId     String?  @map("user_id")
   user       User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
   paper      Paper?
+  groupId    String?       @map("group_id")
+  group      ProjectGroup? @relation(fields: [groupId], references: [id], onDelete: SetNull)
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
   @@index([userId])
+  @@index([groupId])
 }
 
 model Paper {

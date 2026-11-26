@@ -45,10 +45,22 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   ],
   callbacks: {
     ...authConfig.callbacks,
-    async jwt({ token, user }) {
+    async jwt({ token, user, trigger, session }) {
       if (user) {
         token.id = user.id;
       }
+
+      // Keep the header/avatar in sync after the profile page calls update().
+      if (trigger === 'update' && session) {
+        const updates = session as { name?: unknown; image?: unknown };
+        if (typeof updates.name === 'string' && updates.name.trim()) {
+          token.name = updates.name.trim();
+        }
+        if (typeof updates.image === 'string' || updates.image === null) {
+          token.picture = updates.image ?? null;
+        }
+      }
+
       return token;
     },
     async session({ session, token }) {

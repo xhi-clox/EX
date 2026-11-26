@@ -6,6 +6,7 @@ import { usePathname } from 'next/navigation';
 import {
   LayoutDashboard,
   Folder,
+  Activity,
   Settings,
   User,
   HelpCircle,
@@ -23,6 +24,7 @@ const navSections = [
         items: [
             { href: '/', label: 'Dashboard', icon: LayoutDashboard },
             { href: '/projects', label: 'Projects', icon: Folder },
+            { href: '/activity', label: 'Activity', icon: Activity },
         ]
     },
     {
@@ -113,7 +115,7 @@ export function AppSidebar({ onCollapseChange }: AppSidebarProps) {
                             className={cn(
                                 "flex items-center gap-3 border-l-4 py-3 text-sm font-semibold text-[#b5ccca] transition-colors",
                                 'px-6',
-                                pathname === item.href 
+                                (item.href === '/' ? pathname === '/' : pathname.startsWith(item.href))
                                     ? "border-[#70c7b6] bg-white/10 text-white"
                                     : "border-transparent hover:bg-white/5 hover:text-white"
                             )}

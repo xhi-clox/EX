@@ -18,6 +18,7 @@ import { buildBookletOrder } from './booklet';
 import { RichTextToolbar } from './RichTextarea';
 import type { RichTextareaSelectionState } from './RichTextarea';
 import type { TextAlign } from './text-format';
+import { formatClassName } from '@/lib/school-classes';
 
 interface EditorHeaderProps {
   paper: Paper | null;
@@ -229,7 +230,7 @@ export const EditorHeader: React.FC<EditorHeaderProps> = ({
             >
               <StatusIcon className={cn('size-3', (saveStatus === 'saving' || saveStatus === 'dirty') && 'animate-spin')} />
               <span className="truncate">
-                {paper.subject}{paper.grade ? ` · ${paper.grade} শ্রেণি` : ''} · {status.text}
+                {paper.subject}{paper.grade ? ` · ${formatClassName(paper.grade)}` : ''} · {status.text}
               </span>
             </button>
           </div>

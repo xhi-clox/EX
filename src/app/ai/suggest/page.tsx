@@ -16,6 +16,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { formatClassName, SCHOOL_CLASSES } from '@/lib/school-classes';
 
 function AiSuggest() {
   const [topic, setTopic] = useState('');
@@ -116,8 +117,11 @@ function AiSuggest() {
                   <SelectValue placeholder="Select class" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="9">নবম শ্রেণি</SelectItem>
-                  <SelectItem value="10">দশম শ্রেণি</SelectItem>
+                  {SCHOOL_CLASSES.map((schoolClass) => (
+                    <SelectItem key={schoolClass.value} value={schoolClass.value}>
+                      {formatClassName(schoolClass.value)}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>

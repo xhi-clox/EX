@@ -35,8 +35,12 @@ type ImportedQuestion = {
 
 type ImportedQuestionPaper = {
   title?: string;
+  examTitle?: string;
+  schoolName?: string;
   subject?: string;
   grade?: string;
+  timeAllowed?: string;
+  totalMarks?: string | number;
   questions: ImportedQuestion[];
 };
 
@@ -245,11 +249,27 @@ function ImageToQuestionPage() {
       if (parsed.title !== undefined && typeof parsed.title !== 'string') {
         throw new Error('"title" string হতে হবে।');
       }
+      if (parsed.examTitle !== undefined && typeof parsed.examTitle !== 'string') {
+        throw new Error('"examTitle" string হতে হবে।');
+      }
+      if (parsed.schoolName !== undefined && typeof parsed.schoolName !== 'string') {
+        throw new Error('"schoolName" string হতে হবে।');
+      }
       if (parsed.subject !== undefined && typeof parsed.subject !== 'string') {
         throw new Error('"subject" string হতে হবে।');
       }
       if (parsed.grade !== undefined && typeof parsed.grade !== 'string') {
         throw new Error('"grade" string হতে হবে।');
+      }
+      if (parsed.timeAllowed !== undefined && typeof parsed.timeAllowed !== 'string') {
+        throw new Error('"timeAllowed" string হতে হবে।');
+      }
+      if (
+        parsed.totalMarks !== undefined &&
+        typeof parsed.totalMarks !== 'string' &&
+        (typeof parsed.totalMarks !== 'number' || !Number.isFinite(parsed.totalMarks) || parsed.totalMarks < 0)
+      ) {
+        throw new Error('"totalMarks" non-negative number অথবা string হতে হবে।');
       }
       const ids = new Set<string>();
       parsed.questions.forEach((question, index) => {

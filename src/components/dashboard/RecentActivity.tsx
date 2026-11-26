@@ -2,8 +2,9 @@
 
 import Link from 'next/link';
 import { formatDistanceToNow } from 'date-fns';
-import { Clock, FileText } from 'lucide-react';
+import { Clock, FileText, FileQuestion } from 'lucide-react';
 import { useProjects } from '@/hooks/use-projects';
+import { subjectTone } from '@/lib/project-utils';
 
 export function RecentActivity() {
   const { projects, isLoaded } = useProjects();
@@ -31,32 +32,51 @@ export function RecentActivity() {
         <p className="mt-1 text-xs text-[#829697]">
           Create a paper and your recent edits will appear here.
         </p>
+        <Link
+          href="/projects"
+          className="mt-3 text-xs font-bold text-[#0f766e] hover:text-[#115e59]"
+        >
+          Go to projects →
+        </Link>
       </div>
     );
   }
 
   return (
     <div className="flex flex-col">
-      {projects.map((project) => (
-        <Link
-          key={project.id}
-          href={`/editor?project=${project.id}`}
-          className="flex gap-3 border-b border-[#dfeae7] py-3.5 transition-colors last:border-b-0 hover:bg-[#f5faf8] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#5aa99d]"
-        >
-          <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-[#fbe8e4] text-[#c65d4d]">
-            <FileText className="size-5" />
-          </div>
-          <div className="min-w-0 flex-1">
-            <p className="mb-1 truncate text-xs font-semibold leading-relaxed text-[#294b50]">
-              You edited <span className="font-bold">{project.name}</span>
-            </p>
-            <p className="flex items-center gap-1.5 text-[11px] font-medium text-[#5d7778]">
-              <Clock className="size-3" />
-              {formatDistanceToNow(new Date(project.lastUpdated), { addSuffix: true })}
-            </p>
-          </div>
-        </Link>
-      ))}
+      {projects.slice(0, 10).map((project) => {
+        const tone = subjectTone(project.subject);
+        return (
+          <Link
+            key={project.id}
+            href={`/editor?project=${project.id}`}
+            className="flex gap-3 border-b border-[#dfeae7] py-3.5 transition-colors last:border-b-0 hover:bg-[#f5faf8] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#5aa99d]"
+          >
+            <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-[#fbe8e4] text-[#c65d4d]">
+              <FileText className="size-5" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="mb-1 truncate text-xs font-semibold leading-relaxed text-[#294b50]">
+                You updated <span className="font-bold">{project.name}</span>
+              </p>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${tone.badge}`}>
+                  {project.subject}
+                </span>
+                <span className="flex items-center gap-1 text-[10px] font-semibold text-[#5d7778]">
+                  <FileQuestion className="size-3" />
+                  {project.questionCount ?? 0} question
+                  {(project.questionCount ?? 0) === 1 ? '' : 's'}
+                </span>
+              </div>
+              <p className="mt-1 flex items-center gap-1.5 text-[11px] font-medium text-[#5d7778]">
+                <Clock className="size-3" />
+                {formatDistanceToNow(new Date(project.lastUpdated), { addSuffix: true })}
+              </p>
+            </div>
+          </Link>
+        );
+      })}
     </div>
   );
 }
