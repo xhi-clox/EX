@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import {
+  CheckCircle2,
+  Circle,
   Copy,
   ExternalLink,
   Loader2,
@@ -56,6 +58,7 @@ interface ProjectMenuProps {
   onOpen: () => void;
   onRename: (name: string) => Promise<void> | void;
   onDuplicate: () => Promise<void> | void;
+  onToggleCompletion: (completed: boolean) => Promise<void> | void;
   onDelete: () => Promise<void> | void;
   groups?: ProjectGroup[];
   onMove?: (groupId: string | null) => Promise<void> | void;
@@ -67,6 +70,7 @@ export function ProjectMenu({
   onOpen,
   onRename,
   onDuplicate,
+  onToggleCompletion,
   onDelete,
   groups = [],
   onMove,
@@ -78,7 +82,7 @@ export function ProjectMenu({
   const [moveOpen, setMoveOpen] = useState(false);
   const [groupId, setGroupId] = useState(project.groupId ?? 'ungrouped');
   const [name, setName] = useState(project.name);
-  const [busy, setBusy] = useState<'rename' | 'delete' | 'duplicate' | null>(null);
+  const [busy, setBusy] = useState<'rename' | 'delete' | 'duplicate' | 'completion' | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -167,6 +171,23 @@ export function ProjectMenu({
     }
   };
 
+  const handleToggleCompletion = async () => {
+    setBusy('completion');
+    setError(null);
+    try {
+      await onToggleCompletion(!project.completed);
+    } catch (completionError) {
+      const message =
+        completionError instanceof Error
+          ? completionError.message
+          : 'Could not update the paper.';
+      setError(message);
+      toast({ variant: 'destructive', title: 'Update failed', description: message });
+    } finally {
+      setBusy(null);
+    }
+  };
+
   return (
     <>
       <DropdownMenu>
@@ -181,7 +202,7 @@ export function ProjectMenu({
               triggerClassName
             )}
           >
-            {busy === 'duplicate' ? (
+            {busy === 'duplicate' || busy === 'completion' ? (
               <Loader2 className="size-4 animate-spin" />
             ) : (
               <MoreVertical className="size-4" />
@@ -199,6 +220,21 @@ export function ProjectMenu({
           >
             <ExternalLink className="size-4 text-[#587174]" />
             Open in editor
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            className={cn(
+              'cursor-pointer focus:bg-[#f0f8f6]',
+              project.completed && 'text-[#247a58] focus:bg-[#eaf7f2] focus:text-[#247a58]'
+            )}
+            disabled={busy === 'completion'}
+            onSelect={() => void handleToggleCompletion()}
+          >
+            {project.completed ? (
+              <Circle className="size-4 text-[#247a58]" />
+            ) : (
+              <CheckCircle2 className="size-4 text-[#587174]" />
+            )}
+            {project.completed ? 'Mark as in progress' : 'Mark as completed'}
           </DropdownMenuItem>
           <DropdownMenuItem
             className="cursor-pointer focus:bg-[#f0f8f6]"

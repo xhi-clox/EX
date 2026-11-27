@@ -79,6 +79,7 @@ model Project {
   name       String
   classLevel String   @map("class")
   subject    String
+  completed  Boolean  @default(false)
   userId     String?  @map("user_id")
   user       User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
   paper      Paper?

@@ -193,8 +193,9 @@ export function Projects() {
         const tone = subjectTone(project.subject);
         const questionCount = project.questionCount ?? 0;
         const marks = project.totalMarks ?? 0;
-        const status =
-          questionCount === 0
+        const status = project.completed
+          ? { label: 'Completed', className: 'bg-[#dff3e8] text-[#247a58]' }
+          : questionCount === 0
             ? { label: 'No questions', className: 'bg-[#fff1dc] text-[#a66b1d]' }
             : { label: 'Saved', className: 'bg-[#eaf7f2] text-[#327d68]' };
 
@@ -203,7 +204,10 @@ export function Projects() {
             key={project.id}
             role="button"
             tabIndex={0}
-            className="group cursor-pointer rounded-xl border border-[#dce9e5] border-l-4 border-l-[#75bdb0] bg-[#f7fbf9] p-3.5 transition-all duration-200 hover:-translate-y-0.5 hover:border-[#a9d6ce] hover:border-l-[#0f766e] hover:bg-white hover:shadow-[0_8px_20px_rgba(23,52,58,0.07)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#5aa99d]"
+            className={cn(
+              'group cursor-pointer rounded-xl border border-[#dce9e5] border-l-4 bg-[#f7fbf9] p-3.5 transition-all duration-200 hover:-translate-y-0.5 hover:bg-white hover:shadow-[0_8px_20px_rgba(23,52,58,0.07)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#5aa99d]',
+              project.completed ? 'border-l-[#4ca783] bg-[#f3fbf7] hover:border-l-[#247a58]' : 'border-l-[#75bdb0] hover:border-[#a9d6ce] hover:border-l-[#0f766e]'
+            )}
             onClick={() => handleProjectClick(project.id)}
             onKeyDown={(event) => {
               if (event.target !== event.currentTarget) return;
@@ -237,6 +241,15 @@ export function Projects() {
                   toast({
                     title: 'Paper duplicated',
                     description: `A copy of “${project.name}” is ready.`,
+                  });
+                }}
+                onToggleCompletion={async (completed) => {
+                  await updateProject(project.id, { completed });
+                  toast({
+                    title: completed ? 'Paper completed' : 'Paper reopened',
+                    description: completed
+                      ? `“${project.name}” is marked as finished.`
+                      : `“${project.name}” is back in progress.`,
                   });
                 }}
                 onDelete={async () => {

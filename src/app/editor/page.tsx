@@ -13,7 +13,7 @@ import {
 } from '@/components/ui/select';
 import { Card, CardContent } from '@/components/ui/card';
 import { Switch } from '@/components/ui/switch';
-import { Plus, Type, Pilcrow, Image as ImageIcon, Trash2, ArrowUp, ArrowDown, ListOrdered, TableIcon, PlusCircle, MinusCircle, BookMarked, Minus, Sparkles, LogOut, Save, ChevronDown, ChevronUp, Square } from 'lucide-react';
+import { Plus, Type, Pilcrow, Image as ImageIcon, Trash2, ArrowUp, ArrowDown, ListOrdered, TableIcon, PlusCircle, MinusCircle, BookMarked, Minus, Sparkles, LogOut, Save, ChevronDown, ChevronUp, Square, FileJson } from 'lucide-react';
 import Link from 'next/link';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { EditorHeader } from './EditorHeader';
@@ -881,6 +881,7 @@ function EditorPage() {
   const hiddenRenderRef = useRef<HTMLDivElement>(null);
   const imageFileInputRef = useRef<HTMLInputElement>(null);
   const logoFileInputRef = useRef<HTMLInputElement>(null);
+  const jsonFileInputRef = useRef<HTMLInputElement>(null);
   type ImageTarget = { kind: 'append'; questionId: string } | { kind: 'replace'; questionId: string; imageId: string };
   const [imageTarget, setImageTarget] = useState<ImageTarget | null>(null);
   const [settings, setSettings] = useState<PaperSettings>({
@@ -1116,6 +1117,53 @@ function EditorPage() {
     return { ...combinedPaper, questions: questionsWithUniqueIds };
   };
 
+  const handleJsonFileUpload = async (file: File | undefined) => {
+    if (!file || !paper || !projectId) return;
+
+    try {
+      const text = await file.text();
+      const cleaned = text
+        .trim()
+        .replace(/^```(?:json)?\s*/i, '')
+        .replace(/\s*```$/i, '')
+        .trim();
+
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(cleaned);
+      } catch {
+        throw new Error('JSON ফাইলটি পড়া যায়নি। সঠিক JSON ফর্ম্যাট ব্যবহার করুন।');
+      }
+
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new Error('JSON-এর root অবশ্যই একটি object হতে হবে।');
+      }
+
+      const payload = parsed as { questions?: unknown };
+      if (!Array.isArray(payload.questions) || payload.questions.length === 0) {
+        throw new Error('JSON-এ "questions" নামে একটি non-empty array থাকতে হবে।');
+      }
+      if (payload.questions.some((question) => !question || typeof question !== 'object' || Array.isArray(question))) {
+        throw new Error('প্রতিটি প্রশ্ন অবশ্যই একটি object হতে হবে।');
+      }
+
+      const mergedPaper = mergeImportedQuestions(paper, payload);
+      setPaper(mergedPaper);
+      await persistPaper(mergedPaper);
+
+      toast({
+        title: 'প্রশ্ন যোগ করা হয়েছে',
+        description: `${payload.questions.length}টি প্রশ্ন JSON ফাইল থেকে যোগ করা হয়েছে।`,
+      });
+    } catch (error) {
+      console.error('Failed to import question paper JSON file', error);
+      toast({
+        variant: 'destructive',
+        title: 'JSON ইম্পোর্ট ব্যর্থ',
+        description: error instanceof Error ? error.message : 'ফাইলটি যাচাই করে আবার চেষ্টা করুন।',
+      });
+    }
+  };
 
   // Import effect - append imported questions to the already saved paper.
   useEffect(() => {
@@ -3460,6 +3508,28 @@ case 'fill-in-the-blanks':
 
                       </>
                       )}
+                  </div>
+
+                  <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-dashed border-slate-700 px-4 py-3">
+                    <input
+                      ref={jsonFileInputRef}
+                      type="file"
+                      accept=".json,application/json"
+                      className="hidden"
+                      onChange={(event) => {
+                        void handleJsonFileUpload(event.target.files?.[0]);
+                        event.target.value = '';
+                      }}
+                    />
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-slate-200">JSON ফাইল থেকে প্রশ্ন যোগ করুন</p>
+                      <p className="mt-0.5 text-xs text-slate-400">
+                        <a className="underline" href="/question-paper.schema.json" download="question-paper.schema.json">প্রশ্নপত্রের JSON schema</a> অনুযায়ী ফাইল আপলোড করুন।
+                      </p>
+                    </div>
+                    <Button variant="outline" size="sm" onClick={() => jsonFileInputRef.current?.click()}>
+                      <FileJson className="mr-1.5 size-3.5" /> JSON আপলোড
+                    </Button>
                   </div>
 
                   {paper.questions.length === 0 ? (

@@ -174,6 +174,16 @@ function ProjectsPage() {
     router.push(`/editor?project=${project.id}`);
   };
 
+  const toggleCompletion = async (project: Project, completed: boolean) => {
+    await updateProject(project.id, { completed });
+    toast({
+      title: completed ? 'Paper completed' : 'Paper reopened',
+      description: completed
+        ? `“${project.name}” is marked as finished.`
+        : `“${project.name}” is back in progress.`,
+    });
+  };
+
   const statCards = [
     {
       label: 'Papers',
@@ -470,7 +480,12 @@ function ProjectsPage() {
                   return (
                     <article
                       key={project.id}
-                      className="group flex cursor-pointer flex-col rounded-xl border border-[#dce9e5] border-l-4 border-l-[#75bdb0] bg-[#f9fcfb] p-4 transition-all duration-200 hover:-translate-y-0.5 hover:border-[#a9d6ce] hover:border-l-[#0f766e] hover:bg-white hover:shadow-[0_10px_24px_rgba(23,52,58,0.08)]"
+                      className={cn(
+                        'group flex cursor-pointer flex-col rounded-xl border border-[#dce9e5] border-l-4 p-4 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_10px_24px_rgba(23,52,58,0.08)]',
+                        project.completed
+                          ? 'border-l-[#4ca783] bg-[#f3fbf7] hover:border-l-[#247a58] hover:bg-white'
+                          : 'border-l-[#75bdb0] bg-[#f9fcfb] hover:border-[#a9d6ce] hover:border-l-[#0f766e] hover:bg-white'
+                      )}
                       onClick={() => openProject(project)}
                     >
                       <div className="mb-3 flex items-start justify-between gap-2">
@@ -496,6 +511,7 @@ function ProjectsPage() {
                               description: `A copy of “${project.name}” is ready.`,
                             });
                           }}
+                          onToggleCompletion={(completed) => toggleCompletion(project, completed)}
                           onDelete={async () => {
                             await deleteProject(project.id);
                             toast({
@@ -526,12 +542,14 @@ function ProjectsPage() {
                         <span
                           className={cn(
                             'rounded-md px-2 py-1 text-[11px] font-bold',
-                            project.hasPaper
-                              ? 'bg-[#eaf7f2] text-[#327d68]'
-                              : 'bg-[#fff1dc] text-[#a66b1d]'
+                            project.completed
+                              ? 'bg-[#dff3e8] text-[#247a58]'
+                              : project.hasPaper
+                                ? 'bg-[#eaf7f2] text-[#327d68]'
+                                : 'bg-[#fff1dc] text-[#a66b1d]'
                           )}
                         >
-                          {project.hasPaper ? 'Saved' : 'Draft'}
+                          {project.completed ? 'Completed' : project.hasPaper ? 'Saved' : 'Draft'}
                         </span>
                       </div>
 
@@ -615,7 +633,14 @@ function ProjectsPage() {
                       className="grid cursor-pointer grid-cols-[minmax(0,1fr)_44px] items-center gap-3 border-b border-[#edf2f0] px-4 py-3 transition-colors last:border-b-0 hover:bg-[#f7faf9] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#5aa99d] md:grid-cols-[minmax(0,1fr)_110px_80px_90px_120px_44px]"
                     >
                       <div className="min-w-0">
-                        <p className="truncate text-sm font-bold text-[#29484d]">{project.name}</p>
+                        <p className="flex items-center gap-1.5 truncate text-sm font-bold text-[#29484d]">
+                          <span className="truncate">{project.name}</span>
+                          {project.completed && (
+                            <span className="shrink-0 rounded-md bg-[#dff3e8] px-1.5 py-0.5 text-[10px] font-bold text-[#247a58]">
+                              Completed
+                            </span>
+                          )}
+                        </p>
                         <p className="mt-0.5 text-[11px] text-[#829697] md:hidden">
                           {project.subject} · {formatClassName(project.class)} · {project.questionCount ?? 0}{' '}
                           questions
@@ -657,6 +682,7 @@ function ProjectsPage() {
                             description: `A copy of “${project.name}” is ready.`,
                           });
                         }}
+                        onToggleCompletion={(completed) => toggleCompletion(project, completed)}
                         onDelete={async () => {
                           await deleteProject(project.id);
                           toast({

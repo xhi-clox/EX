@@ -59,6 +59,7 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     if (typeof body?.subject === 'string' && body.subject.trim()) data.subject = body.subject.trim();
     if (typeof body?.class === 'string' && body.class.trim()) data.classLevel = body.class.trim();
     if (typeof body?.classLevel === 'string' && body.classLevel.trim()) data.classLevel = body.classLevel.trim();
+    if (typeof body?.completed === 'boolean') data.completed = body.completed;
     if (body?.groupId === null) data.group = { disconnect: true };
     if (typeof body?.groupId === 'string' && body.groupId.trim()) {
       const ownedGroup = await prisma.projectGroup.findFirst({
@@ -74,9 +75,12 @@ export async function PATCH(request: Request, { params }: RouteContext) {
     const project = await prisma.project.update({
       where: { id },
       data,
-      include: { group: { select: { id: true, name: true } } },
+      include: {
+        paper: { select: { data: true } },
+        group: { select: { id: true, name: true } },
+      },
     });
-    return NextResponse.json(toProjectSummary(project));
+    return NextResponse.json(toProjectSummary(project, project.paper?.data));
   } catch (error) {
     if (isPrismaError(error, 'P2025')) {
       return NextResponse.json({ error: 'Project not found.' }, { status: 404 });

@@ -25,6 +25,8 @@ export interface Project {
   class: string;
   subject: string;
   lastUpdated: string;
+  /** Whether the paper has been marked as finished. */
+  completed?: boolean;
   /** Number of saved questions, including sub-questions. */
   questionCount?: number;
   /** Sum of saved question marks (falls back to the paper total). */

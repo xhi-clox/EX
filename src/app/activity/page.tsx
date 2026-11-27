@@ -221,8 +221,8 @@ function ActivityPage() {
                             href={`/editor?project=${project.id}`}
                             className="group relative flex gap-3 rounded-xl border border-transparent px-2 py-2.5 transition-colors hover:border-[#e4ecea] hover:bg-[#f8fbfa]"
                           >
-                            <span className="absolute -left-[17px] top-4 size-2.5 rounded-full border-2 border-white bg-[#75bdb0] ring-1 ring-[#cfe6e1]" />
-                            <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-[#e3f2ee] text-[#0f766e]">
+                            <span className={cn('absolute -left-[17px] top-4 size-2.5 rounded-full border-2 border-white ring-1', project.completed ? 'bg-[#4ca783] ring-[#b8e2cf]' : 'bg-[#75bdb0] ring-[#cfe6e1]')} />
+                            <span className={cn('flex size-9 shrink-0 items-center justify-center rounded-xl', project.completed ? 'bg-[#dff3e8] text-[#247a58]' : 'bg-[#e3f2ee] text-[#0f766e]')}>
                               <FileText className="size-4" />
                             </span>
                             <span className="min-w-0 flex-1">
@@ -230,6 +230,11 @@ function ActivityPage() {
                                 {project.name}
                               </span>
                               <span className="mt-1 flex flex-wrap items-center gap-1.5">
+                                {project.completed && (
+                                  <span className="rounded bg-[#dff3e8] px-1.5 py-0.5 text-[10px] font-bold text-[#247a58]">
+                                    Completed
+                                  </span>
+                                )}
                                 <span className={cn('rounded px-1.5 py-0.5 text-[10px] font-bold', tone.badge)}>
                                   {project.subject}
                                 </span>

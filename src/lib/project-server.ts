@@ -7,6 +7,7 @@ export type ProjectSummary = {
   class: string;
   subject: string;
   lastUpdated: string;
+  completed: boolean;
   questionCount: number;
   totalMarks: number;
   hasPaper: boolean;
@@ -20,6 +21,7 @@ export function toProjectSummary(
     name: string;
     classLevel: string;
     subject: string;
+    completed?: boolean;
     updatedAt: Date;
   },
   paperData?: unknown
@@ -32,6 +34,7 @@ export function toProjectSummary(
     class: project.classLevel,
     subject: project.subject,
     lastUpdated: project.updatedAt.toISOString(),
+    completed: project.completed ?? false,
     questionCount: stats.questionCount,
     totalMarks: stats.totalMarks,
     hasPaper: stats.hasPaper,
